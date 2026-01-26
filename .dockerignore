@@ -1,0 +1,17 @@
+**/bin
+**/obj
+**/out
+**/.vs
+**/.vscode
+**/*.user
+**/*.suo
+**/*.userosscache
+**/*.sln.docstates
+**/node_modules
+**/dist
+**/.git
+**/.idea
+**/*.log
+**/coverage
+**/.DS_Store
+docker-compose.override.yml
