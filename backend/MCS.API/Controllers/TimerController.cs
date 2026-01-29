@@ -27,7 +27,7 @@ public class TimerController : ControllerBase
             var timerId = Guid.NewGuid().ToString();
             var timerGrain = _clusterClient.GetGrain<ITimerGrain>(timerId);
 
-            var result = await timerGrain.CreateTimerAsync(request.Name, request.Interval, request.Data);
+            var result = await timerGrain.CreateTimerAsync(request.Name, request.Interval, request.Data, request.MaxExecutions);
             return Ok(new { TimerId = result });
         }
         catch (Exception ex)
@@ -81,6 +81,22 @@ public class TimerController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error pausing timer");
+            return StatusCode(500, new { Error = ex.Message });
+        }
+    }
+
+    [HttpPost("{timerId}/resume")]
+    public async Task<ActionResult> ResumeTimer(string timerId)
+    {
+        try
+        {
+            var timerGrain = _clusterClient.GetGrain<ITimerGrain>(timerId);
+            await timerGrain.ResumeAsync();
+            return Ok(new { Message = "Timer resumed" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resuming timer");
             return StatusCode(500, new { Error = ex.Message });
         }
     }
@@ -171,6 +187,7 @@ public class CreateTimerRequest
     public string Name { get; set; }
     public TimeSpan Interval { get; set; }
     public Dictionary<string, object>? Data { get; set; }
+    public int? MaxExecutions { get; set; }
 }
 
 public class UpdateIntervalRequest

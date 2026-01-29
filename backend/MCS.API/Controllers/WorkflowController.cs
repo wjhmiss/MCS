@@ -185,6 +185,55 @@ public class WorkflowController : ControllerBase
             return StatusCode(500, new { Error = ex.Message });
         }
     }
+
+    [HttpPost("nested")]
+    public async Task<ActionResult<CreateNestedWorkflowResponse>> CreateNestedWorkflow([FromBody] CreateNestedWorkflowRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("Creating nested workflow: {Name}", request.Name);
+
+            var mainWorkflowGrain = _clusterClient.GetGrain<IWorkflowGrain>(Guid.NewGuid().ToString());
+            var mainWorkflowId = await mainWorkflowGrain.CreateWorkflowAsync(
+                request.Name,
+                WorkflowType.Nested,
+                new List<string>(),
+                null
+            );
+
+            var subWorkflowGrain = _clusterClient.GetGrain<IWorkflowGrain>(Guid.NewGuid().ToString());
+            var subWorkflowId = await subWorkflowGrain.CreateWorkflowAsync(
+                "子工作流",
+                WorkflowType.Serial,
+                request.SubTaskNames.Select(name => Guid.NewGuid().ToString()).ToList(),
+                mainWorkflowId
+            );
+
+            foreach (var taskName in request.SubTaskNames)
+            {
+                var taskGrain = _clusterClient.GetGrain<ITaskGrain>(Guid.NewGuid().ToString());
+                await taskGrain.CreateTaskAsync(taskName);
+                await taskGrain.SetWorkflowAsync(subWorkflowId);
+            }
+
+            await mainWorkflowGrain.AddTaskAsync(subWorkflowId);
+
+            await mainWorkflowGrain.StartAsync();
+
+            _logger.LogInformation("Nested workflow created successfully. Main: {MainWorkflowId}, Sub: {SubWorkflowId}", mainWorkflowId, subWorkflowId);
+
+            return Ok(new CreateNestedWorkflowResponse
+            {
+                MainWorkflowId = mainWorkflowId,
+                SubWorkflowId = subWorkflowId
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating nested workflow");
+            return StatusCode(500, new { Error = ex.Message });
+        }
+    }
 }
 
 public class CreateWorkflowRequest
@@ -198,4 +247,16 @@ public class CreateWorkflowRequest
 public class AddTaskRequest
 {
     public string TaskId { get; set; }
+}
+
+public class CreateNestedWorkflowRequest
+{
+    public string Name { get; set; }
+    public List<string> SubTaskNames { get; set; }
+}
+
+public class CreateNestedWorkflowResponse
+{
+    public string MainWorkflowId { get; set; }
+    public string SubWorkflowId { get; set; }
 }

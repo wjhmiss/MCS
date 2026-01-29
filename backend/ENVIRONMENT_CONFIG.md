@@ -19,14 +19,27 @@
 ```csharp
 if (environment == "Development")
 {
-    // 开发环境：使用本地主机集群 + 内存存储
+    // 开发环境：使用本地主机集群 + PostgreSQL 持久化存储
     siloBuilder.UseLocalhostClustering();
-    siloBuilder.AddMemoryGrainStorage("Default");
-    siloBuilder.AddMemoryGrainStorage("PubSubStore");
+    siloBuilder.AddAdoNetGrainStorage("Default", options =>
+    {
+        options.Invariant = "Npgsql";
+        options.ConnectionString = postgresConnectionString;
+    });
+    siloBuilder.UseAdoNetReminderService(options =>
+    {
+        options.Invariant = "Npgsql";
+        options.ConnectionString = postgresConnectionString;
+    });
+    siloBuilder.AddAdoNetGrainStorage("PubSubStore", options =>
+    {
+        options.Invariant = "Npgsql";
+        options.ConnectionString = postgresConnectionString;
+    });
 }
 else
 {
-    // 生产环境：使用 PostgreSQL 集群 + 持久化存储
+    // 生产环境：使用 PostgreSQL 集群成员发现 + PostgreSQL 持久化存储
     siloBuilder.UseAdoNetClustering(options =>
     {
         options.Invariant = "Npgsql";
@@ -42,7 +55,11 @@ else
         options.Invariant = "Npgsql";
         options.ConnectionString = postgresConnectionString;
     });
-    siloBuilder.AddMemoryGrainStorage("PubSubStore");
+    siloBuilder.AddAdoNetGrainStorage("PubSubStore", options =>
+    {
+        options.Invariant = "Npgsql";
+        options.ConnectionString = postgresConnectionString;
+    });
 }
 ```
 
@@ -63,7 +80,9 @@ else
     var gateways = gatewayAddresses.Select(addr =>
     {
         var parts = addr.Split(':');
-        return new Uri($"http://{parts[0]}:{parts[1]}");
+        var ip = parts[0];
+        var port = parts[1];
+        return new Uri($"gwy.tcp://{ip}:{port}");
     }).ToList();
 
     clientBuilder.UseStaticClustering(options =>
@@ -78,13 +97,14 @@ else
 | 配置项 | 开发环境 | 生产环境 |
 |---------|-----------|-----------|
 | **Clustering 方式** | `UseLocalhostClustering()` | `UseAdoNetClustering()` |
-| **存储方式** | `AddMemoryGrainStorage("Default")` | `AddAdoNetGrainStorage("Default")` |
-| **提醒服务** | 内存存储 | `UseAdoNetReminderService()` |
+| **存储方式** | `AddAdoNetGrainStorage("Default")` | `AddAdoNetGrainStorage("Default")` |
+| **提醒服务** | `UseAdoNetReminderService()` | `UseAdoNetReminderService()` |
 | **客户端连接** | `UseLocalhostClustering()` | `UseStaticClustering()` |
 | **PostgreSQL 主机** | `postgres`（hosts 映射） | `192.168.137.219` |
 | **Redis 主机** | `redis`（hosts 映射） | `192.168.137.219` |
 | **Silo IP** | `127.0.0.1` | `192.168.137.219/220/221` |
 | **Gateway 列表** | 自动发现 | `appsettings.Production.json` 中配置 |
+| **数据库初始化** | SqlSugar 自动创建表 | SqlSugar 自动创建表 |
 
 ## 启动方式
 
@@ -264,6 +284,55 @@ docker compose -f docker-compose.machine3.yml up -d
 }
 ```
 
+## 数据库自动初始化
+
+### OrleansDatabaseInitializer
+
+项目使用 **SqlSugar** 的 CodeFirst 功能自动创建 Orleans 数据库表和存储过程。
+
+#### 初始化流程
+
+```
+1. Silo 启动
+   ↓
+2. 检查数据库表是否存在
+   ↓
+3. 如果不存在，使用 SqlSugar CodeFirst 创建表
+   ↓
+4. 创建 Orleans 存储过程和函数
+   ↓
+5. 插入 Orleans 查询定义
+   ↓
+6. Silo 正常运行
+```
+
+#### 自动创建的表
+
+- `OrleansQuery` - 查询定义表
+- `OrleansStorage` - Grain 状态存储表
+- `OrleansMembershipVersionTable` - 成员版本表
+- `OrleansMembershipTable` - 成员表
+- `OrleansRemindersTable` - 提醒功能表
+
+#### 自动创建的存储过程
+
+- `writetostorage` - Grain 状态写入
+- `upsert_reminder_row` - 提醒记录插入/更新
+- `delete_reminder_row` - 提醒记录删除
+
+#### 自动插入的查询
+
+- `WriteToStorageKey` - 写入存储
+- `ReadFromStorageKey` - 读取存储
+- `ClearStorageKey` - 清除存储
+- `UpsertReminderRowKey` - 插入/更新提醒
+- `ReadReminderRowsKey` - 读取提醒列表
+- `ReadReminderRowKey` - 读取单个提醒
+- `ReadRangeRows1Key` - 读取范围提醒 1
+- `ReadRangeRows2Key` - 读取范围提醒 2
+- `DeleteReminderRowKey` - 删除提醒
+- `DeleteReminderRowsKey` - 删除所有提醒
+
 ## 关键特性
 
 ### ✅ 自动化配置
@@ -281,6 +350,17 @@ docker compose -f docker-compose.machine3.yml up -d
 - 环境变量可覆盖配置文件
 - 支持容器化部署
 
+### ✅ 数据库自动初始化
+- 使用 SqlSugar CodeFirst 自动创建表
+- 自动创建存储过程和函数
+- 自动插入查询定义
+- 无需手动执行 SQL 脚本
+
+### ✅ 持久化存储
+- 开发和生产环境都使用 PostgreSQL
+- 数据持久化，重启后不丢失
+- 支持集群成员发现
+
 ## 注意事项
 
 1. **开发环境**：
@@ -296,13 +376,18 @@ docker compose -f docker-compose.machine3.yml up -d
 2. **生产环境**：
    - 需要确保 PostgreSQL 和 Redis 可访问
    - 使用 PostgreSQL 持久化存储
-   - 使用 `UseAdoNetClustering()` 进行集群
+   - 使用 `UseAdoNetClustering()` 进行集群成员发现
    - 支持多节点集群部署
    - 数据持久化，重启后不丢失
 
 3. **环境变量优先级**：
    - 环境变量 > appsettings.{Environment}.json > appsettings.json
    - 可以通过环境变量覆盖任何配置
+
+4. **数据库初始化**：
+   - 首次启动时自动创建表
+   - 如果表已存在，不会重复创建
+   - 存储过程使用 `CREATE OR REPLACE`，可以重复执行
 
 ## 总结
 
@@ -311,5 +396,7 @@ docker compose -f docker-compose.machine3.yml up -d
 ✅ **开发和生产环境完全隔离**  
 ✅ **支持多种启动方式**  
 ✅ **配置集中管理**  
+✅ **数据库自动初始化**  
+✅ **数据持久化存储**  
 
 只需设置 `ASPNETCORE_ENVIRONMENT` 环境变量，系统会自动选择合适的配置！
