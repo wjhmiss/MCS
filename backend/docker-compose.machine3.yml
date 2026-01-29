@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # Silo #3 服务
+  mcs-silo:
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
+    container_name: mcs-silo-3
+    hostname: mcs-silo-3
+    ports:
+      - "11111:11111"
+      - "30000:30000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - SILO_ID=3
+      - SILO_PORT=11111
+      - GATEWAY_PORT=30000
+      - CLUSTER_ID=MCS.Orleans.Cluster
+      - SERVICE_ID=MCS.Orleans.Service
+      - ADVERTISED_IP=192.168.137.221
+      - POSTGRES_HOST=192.168.137.219
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=OrleansDB
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=sa@3397
+      - REDIS_HOST=192.168.137.219
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=sa@3397
+    networks:
+      - mcs-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:30000/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 40s
+      retries: 3
+
+  # Web API 服务
+  mcs-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: mcs-api
+    hostname: mcs-api
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://0.0.0.0:5000
+    networks:
+      - mcs-network
+    restart: unless-stopped
+    depends_on:
+      mcs-silo:
+        condition: service_healthy
+
+networks:
+  mcs-network:
+    driver: bridge

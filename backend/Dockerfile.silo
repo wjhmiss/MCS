@@ -1,0 +1,30 @@
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+WORKDIR /app
+EXPOSE 11111
+EXPOSE 30000
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY ["MCS.Silo/MCS.Silo.csproj", "MCS.Silo/"]
+COPY ["MCS.Grains/MCS.Grains.csproj", "MCS.Grains/"]
+RUN dotnet restore "MCS.Silo/MCS.Silo.csproj"
+COPY . .
+WORKDIR "/src/MCS.Silo"
+RUN dotnet build "MCS.Silo.csproj" -c Release -o /app/build
+
+FROM build AS publish
+COPY MCS.Silo/appsettings.json ./MCS.Silo/
+COPY MCS.Silo/appsettings.Development.json ./MCS.Silo/
+COPY MCS.Silo/appsettings.Production.json ./MCS.Silo/
+RUN dotnet publish "MCS.Silo.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+
+ENV ASPNETCORE_ENVIRONMENT=Production
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:30000/health || exit 1
+
+ENTRYPOINT ["dotnet", "MCS.Silo.dll"]

@@ -1,0 +1,30 @@
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+WORKDIR /app
+EXPOSE 5000
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY ["MCS.API/MCS.API.csproj", "MCS.API/"]
+COPY ["MCS.Grains/MCS.Grains.csproj", "MCS.Grains/"]
+RUN dotnet restore "MCS.API/MCS.API.csproj"
+COPY . .
+WORKDIR "/src/MCS.API"
+RUN dotnet build "MCS.API.csproj" -c Release -o /app/build
+
+FROM build AS publish
+COPY MCS.API/appsettings.json ./MCS.API/
+COPY MCS.API/appsettings.Development.json ./MCS.API/
+COPY MCS.API/appsettings.Production.json ./MCS.API/
+RUN dotnet publish "MCS.API.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+
+ENV ASPNETCORE_URLS=http://+:5000
+ENV ASPNETCORE_ENVIRONMENT=Production
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1
+
+ENTRYPOINT ["dotnet", "MCS.API.dll"]

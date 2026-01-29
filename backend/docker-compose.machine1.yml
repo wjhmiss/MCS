@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # Nginx 负载均衡器
+  nginx:
+    image: nginx:alpine
+    container_name: mcs-nginx
+    hostname: mcs-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - mcs-network
+    restart: unless-stopped
+    depends_on:
+      mcs-api:
+        condition: service_healthy
+
+  # PostgreSQL 数据库服务（主库）
+  postgres:
+    image: postgres:15-alpine
+    container_name: mcs-postgres
+    hostname: mcs-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=OrleansDB
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=sa@3397
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - mcs-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis 缓存服务（主库）
+  redis:
+    image: redis:7-alpine
+    container_name: mcs-redis
+    hostname: mcs-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - mcs-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes --requirepass sa@3397
+
+  # Silo #1 服务
+  mcs-silo:
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
+    container_name: mcs-silo-1
+    hostname: mcs-silo-1
+    ports:
+      - "11111:11111"
+      - "30000:30000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - SILO_ID=1
+      - SILO_PORT=11111
+      - GATEWAY_PORT=30000
+      - CLUSTER_ID=MCS.Orleans.Cluster
+      - SERVICE_ID=MCS.Orleans.Service
+      - ADVERTISED_IP=192.168.137.219
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=OrleansDB
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=sa@3397
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=sa@3397
+    networks:
+      - mcs-network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Web API 服务
+  mcs-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: mcs-api
+    hostname: mcs-api
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://0.0.0.0:5000
+    networks:
+      - mcs-network
+    restart: unless-stopped
+    depends_on:
+      mcs-silo:
+        condition: service_healthy
+
+networks:
+  mcs-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local

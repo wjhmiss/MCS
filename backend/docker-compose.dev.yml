@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库服务
+  postgres:
+    image: postgres:15-alpine
+    container_name: mcs-postgres-dev
+    hostname: mcs-postgres-dev
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=OrleansDB
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=sa@3397
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    networks:
+      - mcs-dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis 缓存服务
+  redis:
+    image: redis:7-alpine
+    container_name: mcs-redis-dev
+    hostname: mcs-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-dev-data:/data
+    networks:
+      - mcs-dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  # Silo 服务
+  mcs-silo:
+    build:
+      context: .
+      dockerfile: Dockerfile.silo
+    container_name: mcs-silo-dev
+    hostname: mcs-silo-dev
+    ports:
+      - "11111:11111"
+      - "30000:30000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - SILO_ID=1
+      - SILO_PORT=11111
+      - GATEWAY_PORT=30000
+      - CLUSTER_ID=MCS.Orleans.Cluster
+      - SERVICE_ID=MCS.Orleans.Service
+      - ADVERTISED_IP=localhost
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=OrleansDB
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=sa@3397
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    networks:
+      - mcs-dev-network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # API 服务
+  mcs-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: mcs-api-dev
+    hostname: mcs-api-dev
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://0.0.0.0:5000
+    networks:
+      - mcs-dev-network
+    restart: unless-stopped
+    depends_on:
+      mcs-silo:
+        condition: service_healthy
+
+networks:
+  mcs-dev-network:
+    driver: bridge
+
+volumes:
+  postgres-dev-data:
+    driver: local
+  redis-dev-data:
+    driver: local

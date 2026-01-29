@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Orleans.Clustering.AdoNet" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Orleans.Persistence.AdoNet" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Orleans.Reminders.AdoNet" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Orleans.Server" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.0.0" />
+    <PackageReference Include="Npgsql" Version="10.0.1" />
+    <PackageReference Include="StackExchange.Redis" Version="2.10.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\library\SqlSugar-master\SqlSugar\SqlSugar.csproj" />
+    <ProjectReference Include="..\MCS.Grains\MCS.Grains.csproj" />
+  </ItemGroup>
+
+</Project>

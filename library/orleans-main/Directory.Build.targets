@@ -1,0 +1,29 @@
+<Project>
+  <!-- Set InformationVersion here, since $(Version) is already set at this point. -->
+  <PropertyGroup>
+    <InformationalVersion>$(Version). Commit Hash: $(GitHeadSha)</InformationalVersion>
+  </PropertyGroup>
+
+  <Import Condition=" '$(OrleansBuildTimeCodeGen)' == 'true' " Project="$(MSBuildThisFileDirectory)src/Orleans.CodeGenerator/build/Microsoft.Orleans.CodeGenerator.props" />
+  <Import
+    Condition=" '$(OrleansBuildTimeCodeGen)' == 'true' and '$(IsOrleansFrameworkPart)' != 'false' and '$(PackageId)' != 'Microsoft.Orleans.Core.Abstractions' "
+    Project="$(MSBuildThisFileDirectory)src/Orleans.Core/build/Microsoft.Orleans.Core.targets" />
+
+  <ItemGroup>
+    <!-- Enable code generator -->
+    <ProjectReference
+      Include="$(SourceRoot)src/Orleans.CodeGenerator/Orleans.CodeGenerator.csproj"
+      OutputItemType="Analyzer"
+      PrivateAssets="None"
+      Condition=" '$(OrleansBuildTimeCodeGen)' == 'true' "/>
+    <ProjectReference
+      Include="$(SourceRoot)src/Orleans.Analyzers/Orleans.Analyzers.csproj"
+      AssetTargetFallback="netstandard2.0"
+      UndefineProperties="TargetFramework"
+      SkipGetTargetFrameworkProperties="true"
+      OutputItemType="Analyzer"
+      PrivateAssets="None"
+      Condition=" '$(OrleansBuildTimeCodeGen)' == 'true' "/>
+  </ItemGroup>
+
+</Project>
