@@ -1966,16 +1966,715 @@ curl http://localhost:5000/api/stream/notifications/statistics
 
 ---
 
+## 示例7：分离模式流处理（生产者-消费者）
+
+### 7.1 功能说明
+
+分离模式流处理将流的生产者和消费者完全分离，生产者只负责发布消息，消费者只负责订阅和接收消息。这种模式实现了高度解耦，生产者不需要知道消费者的存在。
+
+**应用场景**：
+
+- 日志收集和通知系统
+- 事件驱动架构
+- 微服务间通信
+- 实时数据分析
+
+**核心优势**：
+
+- **职责分离**：生产者和消费者完全独立
+- **高度解耦**：生产者不需要知道消费者的存在
+- **可扩展性**：可以有多个生产者和多个消费者
+- **灵活性**：可以动态添加或移除消费者
+
+### 7.2 架构说明
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Orleans Stream System                     │
+│                                                               │
+│  ┌─────────────────────┐         ┌─────────────────────┐   │
+│  │   LogProducerGrain  │         │ NotificationConsumer│   │
+│  │   (日志生产者)       │         │ Grain (通知消费者)   │   │
+│  │                     │         │                     │   │
+│  │ - CreateStreamAsync │         │ - SubscribeAsync   │   │
+│  │ - PublishMessage    │         │ - UnsubscribeAsync  │   │
+│  │ - GetPublishedMsgs  │         │ - GetReceivedMsgs   │   │
+│  └──────────┬──────────┘         └──────────┬──────────┘   │
+│             │                               │               │
+│             │ Publish                       │ Subscribe     │
+│             ▼                               ▼               │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              application-logs Stream                  │   │
+│  │  - 消息队列                                          │   │
+│  │  - 订阅者列表                                        │   │
+│  │  - 路由规则                                          │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 7.3 接口定义
+
+#### 7.3.1 生产者接口
+
+**文件**: `MCS.Grains/Interfaces/IStreamProducerGrain.cs`
+
+```csharp
+public interface IStreamProducerGrain : IGrainWithStringKey
+{
+    Task<string> CreateStreamAsync(string streamId, string providerName);
+    Task<string> PublishMessageAsync(string streamId, string content, Dictionary<string, object>? metadata = null);
+    Task<List<StreamMessage>> GetPublishedMessagesAsync(string streamId);
+    Task<int> GetSubscriberCountAsync(string streamId);
+}
+```
+
+**方法说明**：
+
+- `CreateStreamAsync`: 创建新的流
+- `PublishMessageAsync`: 发布消息到指定流
+- `GetPublishedMessagesAsync`: 获取已发布的消息历史
+- `GetSubscriberCountAsync`: 获取订阅者数量
+
+#### 7.3.2 消费者接口
+
+**文件**: `MCS.Grains/Interfaces/IStreamConsumerGrain.cs`
+
+```csharp
+public interface IStreamConsumerGrain : IGrainWithStringKey
+{
+    Task<string> SubscribeAsync(string streamId, string providerName);
+    Task UnsubscribeAsync(string subscriptionId);
+    Task<List<StreamMessage>> GetReceivedMessagesAsync();
+    Task<int> GetMessageCountAsync();
+    Task ClearMessagesAsync();
+}
+```
+
+**方法说明**：
+
+- `SubscribeAsync`: 订阅指定的流
+- `UnsubscribeAsync`: 取消订阅
+- `GetReceivedMessagesAsync`: 获取已接收的消息
+- `GetMessageCountAsync`: 获取已接收消息数量
+- `ClearMessagesAsync`: 清空已接收的消息
+
+### 7.4 消息模型
+
+**文件**: `MCS.Grains/Models/StreamMessage.cs`
+
+```csharp
+public class StreamMessage
+{
+    public string MessageId { get; set; } = string.Empty;
+    public string StreamId { get; set; } = string.Empty;
+    public string ProviderName { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public DateTime Timestamp { get; set; }
+    public string PublisherId { get; set; } = string.Empty;
+    public Dictionary<string, object> Metadata { get; set; } = new();
+}
+```
+
+**字段说明**：
+
+- `MessageId`: 消息唯一标识符
+- `StreamId`: 所属流的标识符
+- `ProviderName`: 流提供者名称
+- `Content`: 消息内容
+- `Timestamp`: 消息时间戳
+- `PublisherId`: 发布者 ID
+- `Metadata`: 消息元数据（用于存储额外信息）
+
+### 7.5 生产者实现
+
+**文件**: `MCS.Grains/Grains/LogProducerGrain.cs`
+
+```csharp
+public class LogProducerGrain : Grain, IStreamProducerGrain
+{
+    private readonly IStreamProvider _streamProvider;
+    private readonly IPersistentState<Dictionary<string, List<StreamMessage>>> _publishedMessages;
+
+    public LogProducerGrain(
+        IStreamProvider streamProvider,
+        [PersistentState("logMessages", "Default")] IPersistentState<Dictionary<string, List<StreamMessage>>> publishedMessages)
+    {
+        _streamProvider = streamProvider;
+        _publishedMessages = publishedMessages;
+    }
+
+    public async Task<string> CreateStreamAsync(string streamId, string providerName)
+    {
+        if (!_publishedMessages.State.ContainsKey(streamId))
+        {
+            _publishedMessages.State[streamId] = new List<StreamMessage>();
+            await _publishedMessages.WriteStateAsync();
+        }
+        return streamId;
+    }
+
+    public async Task<string> PublishMessageAsync(string streamId, string content, Dictionary<string, object>? metadata = null)
+    {
+        await CreateStreamAsync(streamId, "Default");
+
+        var message = new StreamMessage
+        {
+            MessageId = Guid.NewGuid().ToString(),
+            StreamId = streamId,
+            ProviderName = "Default",
+            Content = content,
+            Timestamp = DateTime.UtcNow,
+            PublisherId = this.GetPrimaryKeyString(),
+            Metadata = metadata ?? new Dictionary<string, object>()
+        };
+
+        _publishedMessages.State[streamId].Add(message);
+        await _publishedMessages.WriteStateAsync();
+
+        var stream = _streamProvider.GetStream<StreamMessage>(streamId, "Default");
+        await stream.OnNextAsync(message);
+
+        return message.MessageId;
+    }
+
+    public Task<List<StreamMessage>> GetPublishedMessagesAsync(string streamId)
+    {
+        if (_publishedMessages.State.ContainsKey(streamId))
+        {
+            return Task.FromResult(_publishedMessages.State[streamId]);
+        }
+        return Task.FromResult(new List<StreamMessage>());
+    }
+
+    public Task<int> GetSubscriberCountAsync(string streamId)
+    {
+        return Task.FromResult(0);
+    }
+}
+```
+
+**代码讲解**：
+
+1. **构造函数**：
+   - 注入 `IStreamProvider`：Orleans 流提供者
+   - 注入 `IPersistentState`：持久化状态存储
+
+2. **CreateStreamAsync**：
+   - 检查流是否已存在
+   - 如果不存在，创建新的消息列表
+   - 持久化状态到数据库
+
+3. **PublishMessageAsync**：
+   - 确保流存在
+   - 创建消息对象，包含所有必要信息
+   - 将消息持久化存储
+   - 通过 Orleans 流系统发送消息给所有订阅者
+
+4. **GetPublishedMessagesAsync**：
+   - 从持久化存储中获取消息历史
+   - 支持查询和审计
+
+### 7.6 消费者实现
+
+**文件**: `MCS.Grains/Grains/NotificationConsumerGrain.cs`
+
+```csharp
+public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
+{
+    private readonly IStreamProvider _streamProvider;
+    private readonly IPersistentState<List<StreamMessage>> _receivedMessages;
+    private readonly Dictionary<string, StreamSubscriptionHandle<StreamMessage>> _subscriptions;
+
+    public NotificationConsumerGrain(
+        IStreamProvider streamProvider,
+        [PersistentState("notificationMessages", "Default")] IPersistentState<List<StreamMessage>> receivedMessages)
+    {
+        _streamProvider = streamProvider;
+        _receivedMessages = receivedMessages;
+        _subscriptions = new Dictionary<string, StreamSubscriptionHandle<StreamMessage>>();
+    }
+
+    public async Task<string> SubscribeAsync(string streamId, string providerName)
+    {
+        var subscriptionId = Guid.NewGuid().ToString();
+        var stream = _streamProvider.GetStream<StreamMessage>(streamId, providerName);
+        var observer = new NotificationStreamObserver(this.GetPrimaryKeyString(), _receivedMessages);
+
+        var handle = await stream.SubscribeAsync(observer);
+        _subscriptions[subscriptionId] = handle;
+
+        return subscriptionId;
+    }
+
+    public async Task UnsubscribeAsync(string subscriptionId)
+    {
+        if (_subscriptions.TryGetValue(subscriptionId, out var handle))
+        {
+            await handle.UnsubscribeAsync();
+            _subscriptions.Remove(subscriptionId);
+        }
+    }
+
+    public Task<List<StreamMessage>> GetReceivedMessagesAsync()
+    {
+        return Task.FromResult(_receivedMessages.State);
+    }
+
+    public Task<int> GetMessageCountAsync()
+    {
+        return Task.FromResult(_receivedMessages.State.Count);
+    }
+
+    public async Task ClearMessagesAsync()
+    {
+        _receivedMessages.State.Clear();
+        await _receivedMessages.WriteStateAsync();
+    }
+}
+
+public class NotificationStreamObserver : IAsyncObserver<StreamMessage>
+{
+    private readonly string _consumerId;
+    private readonly IPersistentState<List<StreamMessage>> _receivedMessages;
+
+    public NotificationStreamObserver(string consumerId, IPersistentState<List<StreamMessage>> receivedMessages)
+    {
+        _consumerId = consumerId;
+        _receivedMessages = receivedMessages;
+    }
+
+    public async Task OnNextAsync(StreamMessage item, StreamSequenceToken? token = null)
+    {
+        _receivedMessages.State.Add(item);
+        await _receivedMessages.WriteStateAsync();
+
+        var level = item.Metadata.ContainsKey("Level") ? item.Metadata["Level"].ToString() : "INFO";
+        var source = item.Metadata.ContainsKey("Source") ? item.Metadata["Source"].ToString() : "Unknown";
+
+        Console.WriteLine($"[Notification Service {_consumerId}] Received {level} log from {source}: {item.Content}");
+    }
+
+    public Task OnCompletedAsync()
+    {
+        Console.WriteLine($"[Notification Service {_consumerId}] Stream completed");
+        return Task.CompletedTask;
+    }
+
+    public Task OnErrorAsync(Exception ex)
+    {
+        Console.WriteLine($"[Notification Service {_consumerId}] Error: {ex.Message}");
+        return Task.CompletedTask;
+    }
+}
+```
+
+**代码讲解**：
+
+1. **构造函数**：
+   - 注入 `IStreamProvider`：Orleans 流提供者
+   - 注入 `IPersistentState`：持久化状态存储
+   - 初始化订阅字典：管理所有订阅
+
+2. **SubscribeAsync**：
+   - 生成唯一的订阅 ID
+   - 创建流观察者
+   - 订阅流并保存订阅句柄
+   - 返回订阅 ID 用于后续取消订阅
+
+3. **UnsubscribeAsync**：
+   - 根据订阅 ID 查找订阅句柄
+   - 调用 `UnsubscribeAsync` 取消订阅
+   - 从订阅字典中移除
+
+4. **NotificationStreamObserver**：
+   - `OnNextAsync`：接收到消息时的回调
+   - `OnCompletedAsync`：流完成时的回调
+   - `OnErrorAsync`：发生错误时的回调
+   - 根据日志级别和来源进行通知
+
+### 7.7 完整使用示例
+
+#### 7.7.1 基础使用
+
+```csharp
+// ========== 获取Grain实例 ==========
+var logProducer = grainFactory.GetGrain<IStreamProducerGrain>("log-service");
+var notificationConsumer = grainFactory.GetGrain<IStreamConsumerGrain>("notification-service");
+
+// ========== 1. 创建日志流 ==========
+await logProducer.CreateStreamAsync("application-logs", "Default");
+Console.WriteLine("日志流创建成功");
+
+// ========== 2. 订阅日志流 ==========
+var subscriptionId = await notificationConsumer.SubscribeAsync("application-logs", "Default");
+Console.WriteLine($"订阅成功，订阅ID: {subscriptionId}");
+
+// ========== 3. 发布日志消息 ==========
+await logProducer.PublishMessageAsync("application-logs", "Application started successfully",
+    new Dictionary<string, object> 
+    { 
+        { "Level", "INFO" }, 
+        { "Source", "MainService" } 
+    });
+
+await logProducer.PublishMessageAsync("application-logs", "Database connection failed",
+    new Dictionary<string, object> 
+    { 
+        { "Level", "ERROR" }, 
+        { "Source", "DatabaseService" } 
+    });
+
+await logProducer.PublishMessageAsync("application-logs", "User login successful",
+    new Dictionary<string, object> 
+    { 
+        { "Level", "INFO" }, 
+        { "Source", "AuthService" } 
+    });
+
+// ========== 4. 查看接收到的消息 ==========
+var receivedMessages = await notificationConsumer.GetReceivedMessagesAsync();
+Console.WriteLine($"通知服务接收到 {receivedMessages.Count} 条消息");
+
+foreach (var msg in receivedMessages)
+{
+    var level = msg.Metadata["Level"].ToString();
+    var source = msg.Metadata["Source"].ToString();
+    Console.WriteLine($"[{msg.Timestamp}] [{level}] {source}: {msg.Content}");
+}
+
+// ========== 5. 查看发布的消息 ==========
+var publishedMessages = await logProducer.GetPublishedMessagesAsync("application-logs");
+Console.WriteLine($"日志服务发布了 {publishedMessages.Count} 条消息");
+
+// ========== 6. 取消订阅 ==========
+await notificationConsumer.UnsubscribeAsync(subscriptionId);
+Console.WriteLine("已取消订阅");
+```
+
+#### 7.7.2 多消费者场景
+
+```csharp
+// ========== 创建多个消费者 ==========
+var notificationConsumer1 = grainFactory.GetGrain<IStreamConsumerGrain>("notification-service-1");
+var notificationConsumer2 = grainFactory.GetGrain<IStreamConsumerGrain>("notification-service-2");
+var alertConsumer = grainFactory.GetGrain<IStreamConsumerGrain>("alert-service");
+
+// ========== 所有消费者订阅同一个流 ==========
+var subscription1 = await notificationConsumer1.SubscribeAsync("application-logs", "Default");
+var subscription2 = await notificationConsumer2.SubscribeAsync("application-logs", "Default");
+var subscription3 = await alertConsumer.SubscribeAsync("application-logs", "Default");
+
+// ========== 发布消息 ==========
+await logProducer.PublishMessageAsync("application-logs", "Critical error occurred",
+    new Dictionary<string, object> 
+    { 
+        { "Level", "ERROR" }, 
+        { "Source", "PaymentService" },
+        { "Priority", "High" }
+    });
+
+// ========== 所有消费者都会收到消息 ==========
+var messages1 = await notificationConsumer1.GetReceivedMessagesAsync();
+var messages2 = await notificationConsumer2.GetReceivedMessagesAsync();
+var messages3 = await alertConsumer.GetReceivedMessagesAsync();
+
+Console.WriteLine($"消费者1收到 {messages1.Count} 条消息");
+Console.WriteLine($"消费者2收到 {messages2.Count} 条消息");
+Console.WriteLine($"告警服务收到 {messages3.Count} 条消息");
+```
+
+#### 7.7.3 日志级别过滤
+
+```csharp
+public class ErrorOnlyStreamObserver : IAsyncObserver<StreamMessage>
+{
+    private readonly string _consumerId;
+    private readonly IPersistentState<List<StreamMessage>> _receivedMessages;
+
+    public ErrorOnlyStreamObserver(string consumerId, IPersistentState<List<StreamMessage>> receivedMessages)
+    {
+        _consumerId = consumerId;
+        _receivedMessages = receivedMessages;
+    }
+
+    public async Task OnNextAsync(StreamMessage item, StreamSequenceToken? token = null)
+    {
+        var level = item.Metadata.ContainsKey("Level") ? item.Metadata["Level"].ToString() : "INFO";
+
+        // 只接收 ERROR 级别的日志
+        if (level == "ERROR")
+        {
+            _receivedMessages.State.Add(item);
+            await _receivedMessages.WriteStateAsync();
+
+            var source = item.Metadata.ContainsKey("Source") ? item.Metadata["Source"].ToString() : "Unknown";
+            Console.WriteLine($"[Error Alert {_consumerId}] Error in {source}: {item.Content}");
+
+            // 发送告警通知
+            await SendAlertNotificationAsync(item);
+        }
+    }
+
+    private async Task SendAlertNotificationAsync(StreamMessage message)
+    {
+        // 发送邮件、短信或其他告警方式
+        Console.WriteLine($"Sending alert for error: {message.Content}");
+    }
+
+    public Task OnCompletedAsync() => Task.CompletedTask;
+    public Task OnErrorAsync(Exception ex) => Task.CompletedTask;
+}
+```
+
+### 7.8 实际应用场景
+
+#### 7.8.1 日志收集和通知系统
+
+```csharp
+// ========== 应用服务发布日志 ==========
+public class ApplicationService
+{
+    private readonly IStreamProducerGrain _logProducer;
+
+    public ApplicationService(IGrainFactory grainFactory)
+    {
+        _logProducer = grainFactory.GetGrain<IStreamProducerGrain>("log-service");
+    }
+
+    public async Task LogInfoAsync(string source, string message)
+    {
+        await _logProducer.PublishMessageAsync("application-logs", message,
+            new Dictionary<string, object>
+            {
+                { "Level", "INFO" },
+                { "Source", source }
+            });
+    }
+
+    public async Task LogErrorAsync(string source, string message, Exception? ex = null)
+    {
+        await _logProducer.PublishMessageAsync("application-logs", message,
+            new Dictionary<string, object>
+            {
+                { "Level", "ERROR" },
+                { "Source", source },
+                { "Exception", ex?.Message ?? string.Empty }
+            });
+    }
+
+    public async Task LogWarningAsync(string source, string message)
+    {
+        await _logProducer.PublishMessageAsync("application-logs", message,
+            new Dictionary<string, object>
+            {
+                { "Level", "WARNING" },
+                { "Source", source }
+            });
+    }
+}
+
+// ========== 通知服务接收日志 ==========
+public class NotificationService
+{
+    private readonly IStreamConsumerGrain _notificationConsumer;
+
+    public NotificationService(IGrainFactory grainFactory)
+    {
+        _notificationConsumer = grainFactory.GetGrain<IStreamConsumerGrain>("notification-service");
+    }
+
+    public async Task StartAsync()
+    {
+        await _notificationConsumer.SubscribeAsync("application-logs", "Default");
+    }
+
+    public async Task ProcessNotificationsAsync()
+    {
+        var messages = await _notificationConsumer.GetReceivedMessagesAsync();
+
+        foreach (var msg in messages)
+        {
+            var level = msg.Metadata["Level"].ToString();
+            var source = msg.Metadata["Source"].ToString();
+
+            switch (level)
+            {
+                case "ERROR":
+                    await SendErrorAlertAsync(source, msg.Content);
+                    break;
+                case "WARNING":
+                    await SendWarningNotificationAsync(source, msg.Content);
+                    break;
+                case "INFO":
+                    await LogInfoAsync(source, msg.Content);
+                    break;
+            }
+        }
+    }
+
+    private async Task SendErrorAlertAsync(string source, string message)
+    {
+        Console.WriteLine($"[ALERT] Error in {source}: {message}");
+        // 发送邮件、短信等告警
+    }
+
+    private async Task SendWarningNotificationAsync(string source, string message)
+    {
+        Console.WriteLine($"[WARNING] Warning in {source}: {message}");
+        // 发送警告通知
+    }
+
+    private async Task LogInfoAsync(string source, string message)
+    {
+        Console.WriteLine($"[INFO] Info from {source}: {message}");
+        // 记录信息日志
+    }
+}
+```
+
+#### 7.8.2 事件驱动架构
+
+```csharp
+// ========== 订单服务发布事件 ==========
+public class OrderService
+{
+    private readonly IStreamProducerGrain _eventProducer;
+
+    public OrderService(IGrainFactory grainFactory)
+    {
+        _eventProducer = grainFactory.GetGrain<IStreamProducerGrain>("event-service");
+    }
+
+    public async Task CreateOrderAsync(Order order)
+    {
+        // 创建订单逻辑
+        var orderId = await SaveOrderAsync(order);
+
+        // 发布订单创建事件
+        await _eventProducer.PublishMessageAsync("order-events", $"Order {orderId} created",
+            new Dictionary<string, object>
+            {
+                { "EventType", "OrderCreated" },
+                { "OrderId", orderId },
+                { "CustomerId", order.CustomerId },
+                { "Amount", order.Amount }
+            });
+    }
+
+    public async Task UpdateOrderStatusAsync(string orderId, string status)
+    {
+        // 更新订单状态逻辑
+        await UpdateStatusAsync(orderId, status);
+
+        // 发布订单状态更新事件
+        await _eventProducer.PublishMessageAsync("order-events", $"Order {orderId} status updated to {status}",
+            new Dictionary<string, object>
+            {
+                { "EventType", "OrderStatusUpdated" },
+                { "OrderId", orderId },
+                { "Status", status }
+            });
+    }
+}
+
+// ========== 库存服务订阅事件 ==========
+public class InventoryService
+{
+    private readonly IStreamConsumerGrain _eventConsumer;
+
+    public InventoryService(IGrainFactory grainFactory)
+    {
+        _eventConsumer = grainFactory.GetGrain<IStreamConsumerGrain>("inventory-service");
+    }
+
+    public async Task StartAsync()
+    {
+        await _eventConsumer.SubscribeAsync("order-events", "Default");
+    }
+
+    public async Task ProcessOrderEventsAsync()
+    {
+        var messages = await _eventConsumer.GetReceivedMessagesAsync();
+
+        foreach (var msg in messages)
+        {
+            var eventType = msg.Metadata["EventType"].ToString();
+
+            if (eventType == "OrderCreated")
+            {
+                var orderId = msg.Metadata["OrderId"].ToString();
+                await ReserveInventoryAsync(orderId);
+            }
+        }
+    }
+
+    private async Task ReserveInventoryAsync(string orderId)
+    {
+        Console.WriteLine($"Reserving inventory for order: {orderId}");
+        // 预留库存逻辑
+    }
+}
+```
+
+### 7.9 关键特性总结
+
+| 特性                 | 说明                                 |
+| -------------------- | ------------------------------------ |
+| **职责分离** | 生产者和消费者完全独立               |
+| **高度解耦** | 生产者不需要知道消费者的存在         |
+| **可扩展性** | 可以有多个生产者和多个消费者         |
+| **持久化**   | 所有消息都会持久化存储               |
+| **实时性**   | 消息通过 Orleans 流系统实时推送      |
+| **元数据支持** | 支持消息元数据，用于过滤和路由       |
+| **订阅管理** | 支持订阅和取消订阅                  |
+| **消息历史** | 支持查询历史消息                    |
+
+### 7.10 与统一模式对比
+
+| 特性                 | 分离模式                          | 统一模式                          |
+| -------------------- | --------------------------------- | --------------------------------- |
+| **职责**             | 生产者和消费者分离                | 发布和订阅都在同一个 Grain        |
+| **适用场景**         | 复杂的微服务架构                  | 简单的应用场景                    |
+| **解耦程度**         | 高度解耦                          | 中等耦合                          |
+| **代码复杂度**       | 较高                              | 较低                              |
+| **灵活性**           | 高                                | 中                                |
+| **可维护性**         | 高                                | 中                                |
+
+### 7.11 最佳实践
+
+1. **选择合适的模式**：
+   - 简单场景使用统一模式
+   - 复杂微服务使用分离模式
+
+2. **合理使用元数据**：
+   - 使用元数据进行消息过滤
+   - 避免在元数据中存储大量数据
+
+3. **错误处理**：
+   - 在观察者中妥善处理异常
+   - 避免异常影响其他消费者
+
+4. **性能优化**：
+   - 批量处理消息
+   - 避免频繁的状态写入
+
+5. **监控和日志**：
+   - 记录订阅和取消订阅事件
+   - 监控消息处理延迟
+
+---
+
 ## 总结
 
-本教程涵盖了 Orleans 的六大高级特性：
+本教程涵盖了 Orleans 的七大高级特性：
 
 1. **串行工作流**：按顺序执行任务
 2. **并行工作流**：同时执行多个任务
 3. **工作流嵌套**：工作流调用其他工作流
 4. **定时器**：周期性任务执行
 5. **提醒**：基于时间的任务调度
-6. **流处理**：实时数据流处理
+6. **流处理（统一模式）**：实时数据流处理
+7. **流处理（分离模式）**：生产者-消费者模式
 
 每个示例都包含了完整的执行流程、代码讲解和实际调用示例，帮助你深入理解 Orleans 的高级特性。
 
