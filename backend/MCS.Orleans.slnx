@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="../library/MQTTnet-master/MQTTnet/MQTTnet.csproj" />
   <Project Path="../library/SqlSugar-master/SqlSugar/SqlSugar.csproj" />
   <Project Path="MCS.API/MCS.API.csproj" />
   <Project Path="MCS.Grains/MCS.Grains.csproj" />

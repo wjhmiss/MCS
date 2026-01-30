@@ -186,6 +186,70 @@ public class WorkflowController : ControllerBase
         }
     }
 
+    [HttpPost("{workflowId}/schedule")]
+    public async Task<ActionResult> ScheduleWorkflow(string workflowId, [FromBody] ScheduleWorkflowRequest request)
+    {
+        try
+        {
+            var workflowGrain = _clusterClient.GetGrain<IWorkflowGrain>(workflowId);
+            await workflowGrain.ScheduleAsync(request.IntervalMs, request.IsLooped, request.LoopCount);
+            return Ok(new { Message = "Workflow scheduled" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error scheduling workflow");
+            return StatusCode(500, new { Error = ex.Message });
+        }
+    }
+
+    [HttpPost("{workflowId}/unschedule")]
+    public async Task<ActionResult> UnscheduleWorkflow(string workflowId)
+    {
+        try
+        {
+            var workflowGrain = _clusterClient.GetGrain<IWorkflowGrain>(workflowId);
+            await workflowGrain.UnscheduleAsync();
+            return Ok(new { Message = "Workflow unscheduled" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error unscheduling workflow");
+            return StatusCode(500, new { Error = ex.Message });
+        }
+    }
+
+    [HttpPost("{workflowId}/stop")]
+    public async Task<ActionResult> StopWorkflow(string workflowId)
+    {
+        try
+        {
+            var workflowGrain = _clusterClient.GetGrain<IWorkflowGrain>(workflowId);
+            await workflowGrain.StopAsync();
+            return Ok(new { Message = "Workflow stopped" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error stopping workflow");
+            return StatusCode(500, new { Error = ex.Message });
+        }
+    }
+
+    [HttpPost("{workflowId}/reset")]
+    public async Task<ActionResult> ResetWorkflow(string workflowId)
+    {
+        try
+        {
+            var workflowGrain = _clusterClient.GetGrain<IWorkflowGrain>(workflowId);
+            await workflowGrain.ResetAsync();
+            return Ok(new { Message = "Workflow reset" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resetting workflow");
+            return StatusCode(500, new { Error = ex.Message });
+        }
+    }
+
     [HttpPost("nested")]
     public async Task<ActionResult<CreateNestedWorkflowResponse>> CreateNestedWorkflow([FromBody] CreateNestedWorkflowRequest request)
     {
@@ -259,4 +323,11 @@ public class CreateNestedWorkflowResponse
 {
     public string MainWorkflowId { get; set; }
     public string SubWorkflowId { get; set; }
+}
+
+public class ScheduleWorkflowRequest
+{
+    public long IntervalMs { get; set; }
+    public bool IsLooped { get; set; }
+    public int? LoopCount { get; set; }
 }

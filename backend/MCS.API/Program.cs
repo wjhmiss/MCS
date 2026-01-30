@@ -4,6 +4,8 @@ using Microsoft.Extensions.Hosting;
 using Orleans;
 using Orleans.Configuration;
 using System.Net;
+using Microsoft.Extensions.Options;
+using MCS.Grains.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,6 +37,17 @@ builder.Services.AddSingleton<IClusterClient>(sp =>
 {
     var service = sp.GetRequiredService<OrleansClientService>();
     return service.GetClient();
+});
+
+builder.Services.AddHttpClient("MCS.Orleans.HttpClient");
+builder.Services.AddSingleton<IHttpApiService, HttpApiService>();
+
+builder.Services.Configure<MqttConfig>(options =>
+{
+    options.Host = builder.Configuration["MQTT:Host"] ?? "localhost";
+    options.Port = int.Parse(builder.Configuration["MQTT:Port"] ?? "1883");
+    options.Username = builder.Configuration["MQTT:Username"];
+    options.Password = builder.Configuration["MQTT:Password"];
 });
 
 var app = builder.Build();

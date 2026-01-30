@@ -11,6 +11,7 @@ using StackExchange.Redis;
 using SqlSugar;
 using System.Net;
 using MCS.Silo.Database;
+using MCS.Grains.Services;
 
 var host = Host.CreateDefaultBuilder(args)
     .UseOrleans(siloBuilder =>
@@ -159,6 +160,18 @@ var host = Host.CreateDefaultBuilder(args)
                 sp.GetRequiredService<ISqlSugarClient>(),
                 postgresConnectionString
             );
+        });
+
+        services.AddSingleton<IMqttService, MqttService>();
+        services.AddHttpClient("MCS.Orleans.HttpClient");
+        services.AddSingleton<IHttpApiService, HttpApiService>();
+
+        services.Configure<MqttConfig>(options =>
+        {
+            options.Host = Environment.GetEnvironmentVariable("MQTT_HOST") ?? "localhost";
+            options.Port = int.Parse(Environment.GetEnvironmentVariable("MQTT_PORT") ?? "1883");
+            options.Username = Environment.GetEnvironmentVariable("MQTT_USERNAME");
+            options.Password = Environment.GetEnvironmentVariable("MQTT_PASSWORD");
         });
     })
     .ConfigureLogging(logging =>

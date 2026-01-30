@@ -69,4 +69,27 @@ public interface IWorkflowGrain : IGrainWithStringKey
     /// </summary>
     /// <param name="data">数据字典</param>
     Task SetDataAsync(Dictionary<string, object> data);
+
+    /// <summary>
+    /// 设置定时执行工作流
+    /// </summary>
+    /// <param name="intervalMs">定时间隔（毫秒）</param>
+    /// <param name="isLooped">是否循环执行</param>
+    /// <param name="loopCount">循环次数（null 表示无限循环）</param>
+    Task ScheduleAsync(long intervalMs, bool isLooped = false, int? loopCount = null);
+
+    /// <summary>
+    /// 取消定时执行
+    /// </summary>
+    Task UnscheduleAsync();
+
+    /// <summary>
+    /// 停止工作流
+    /// </summary>
+    Task StopAsync();
+
+    /// <summary>
+    /// 重置工作流（清空执行历史和状态）
+    /// </summary>
+    Task ResetAsync();
 }

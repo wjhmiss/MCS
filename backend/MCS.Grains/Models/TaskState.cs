@@ -28,7 +28,17 @@ public enum TaskStatus
     /// <summary>
     /// 已跳过
     /// </summary>
-    Skipped
+    Skipped,
+
+    /// <summary>
+    /// 等待 MQTT 消息
+    /// </summary>
+    WaitingForMqtt,
+
+    /// <summary>
+    /// 等待 Controller 调用
+    /// </summary>
+    WaitingForController
 }
 
 /// <summary>
@@ -90,9 +100,94 @@ public class TaskState
     /// 最大重试次数（默认为3）
     /// </summary>
     public int MaxRetries { get; set; } = 3;
-    
+
+    /// <summary>
+    /// MQTT 发布最大重试次数（-1 表示无限重试）
+    /// </summary>
+    public int MqttPublishMaxRetries { get; set; } = -1;
+
+    /// <summary>
+    /// MQTT 发布当前重试次数
+    /// </summary>
+    public int MqttPublishRetryCount { get; set; } = 0;
+
+    /// <summary>
+    /// HTTP API 调用最大重试次数（-1 表示无限重试）
+    /// </summary>
+    public int ApiCallMaxRetries { get; set; } = -1;
+
+    /// <summary>
+    /// HTTP API 调用当前重试次数
+    /// </summary>
+    public int ApiCallRetryCount { get; set; } = 0;
+
+    /// <summary>
+    /// 任务是否被停止
+    /// </summary>
+    public bool IsStopped { get; set; } = false;
+
     /// <summary>
     /// 任务参数字典
     /// </summary>
     public Dictionary<string, object> Parameters { get; set; } = new();
+
+    /// <summary>
+    /// MQTT 发布主题
+    /// </summary>
+    public string? MqttPublishTopic { get; set; }
+
+    /// <summary>
+    /// MQTT 发布消息
+    /// </summary>
+    public string? MqttPublishMessage { get; set; }
+
+    /// <summary>
+    /// MQTT 订阅主题（用于等待消息）
+    /// </summary>
+    public string? MqttSubscribeTopic { get; set; }
+
+    /// <summary>
+    /// 是否等待 Controller 调用
+    /// </summary>
+    public bool WaitForController { get; set; } = false;
+
+    /// <summary>
+    /// MQTT 消息内容（收到消息后存储）
+    /// </summary>
+    public string? MqttReceivedMessage { get; set; }
+
+    /// <summary>
+    /// HTTP API 请求 URL
+    /// </summary>
+    public string? ApiUrl { get; set; }
+
+    /// <summary>
+    /// HTTP 请求方法（GET/POST/PUT/DELETE）
+    /// </summary>
+    public string? ApiMethod { get; set; }
+
+    /// <summary>
+    /// HTTP 请求头
+    /// </summary>
+    public Dictionary<string, string> ApiHeaders { get; set; } = new();
+
+    /// <summary>
+    /// HTTP 请求体
+    /// </summary>
+    public string? ApiBody { get; set; }
+
+    /// <summary>
+    /// HTTP 响应内容
+    /// </summary>
+    public string? ApiResponse { get; set; }
+
+    /// <summary>
+    /// Controller 调用数据
+    /// </summary>
+    public Dictionary<string, object>? ControllerCallData { get; set; }
+
+    /// <summary>
+    /// 等待状态（WaitingForMqtt/WaitingForController/None）
+    /// </summary>
+    public string? WaitingState { get; set; }
 }

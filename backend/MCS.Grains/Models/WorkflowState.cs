@@ -28,7 +28,12 @@ public enum WorkflowStatus
     /// <summary>
     /// 已暂停
     /// </summary>
-    Paused
+    Paused,
+
+    /// <summary>
+    /// 已停止
+    /// </summary>
+    Stopped
 }
 
 /// <summary>
@@ -116,4 +121,34 @@ public class WorkflowState
     /// 自定义数据字典
     /// </summary>
     public Dictionary<string, object> Data { get; set; } = new();
+
+    /// <summary>
+    /// 是否为定时工作流
+    /// </summary>
+    public bool IsScheduled { get; set; }
+
+    /// <summary>
+    /// 定时间隔（毫秒）
+    /// </summary>
+    public long? ScheduleInterval { get; set; }
+
+    /// <summary>
+    /// 是否循环执行
+    /// </summary>
+    public bool IsLooped { get; set; }
+
+    /// <summary>
+    /// 循环次数（null 表示无限循环）
+    /// </summary>
+    public int? LoopCount { get; set; }
+
+    /// <summary>
+    /// 当前循环次数
+    /// </summary>
+    public int CurrentLoopCount { get; set; }
+
+    /// <summary>
+    /// Reminder 名称（用于定时执行）
+    /// </summary>
+    public string? ReminderName { get; set; }
 }
