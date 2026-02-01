@@ -5,13 +5,38 @@ using MCS.Grains.Models;
 
 namespace MCS.Grains.Grains;
 
+/// <summary>
+/// 通知消费者Grain实现类
+/// 负责订阅通知流，接收并存储通知消息
+/// 支持按级别和来源筛选消息，支持错误和警告告警
+/// </summary>
 public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
 {
+    /// <summary>
+    /// 流提供者，用于获取消息流
+    /// </summary>
     private readonly IStreamProvider _streamProvider;
+
+    /// <summary>
+    /// 持久化状态，存储接收到的通知消息列表
+    /// </summary>
     private readonly IPersistentState<List<StreamMessage>> _receivedMessages;
+
+    /// <summary>
+    /// 订阅句柄字典，键为订阅ID，值为流订阅句柄
+    /// </summary>
     private readonly Dictionary<string, StreamSubscriptionHandle<StreamMessage>> _subscriptions;
+
+    /// <summary>
+    /// 流到订阅ID的映射字典
+    /// </summary>
     private readonly Dictionary<string, string> _streamToSubscriptionId;
 
+    /// <summary>
+    /// 构造函数，注入流提供者和持久化状态
+    /// </summary>
+    /// <param name="streamProvider">流提供者</param>
+    /// <param name="receivedMessages">接收消息的持久化状态</param>
     public NotificationConsumerGrain(
         IStreamProvider streamProvider,
         [PersistentState("notificationMessages", "Default")] IPersistentState<List<StreamMessage>> receivedMessages)
@@ -22,6 +47,11 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         _streamToSubscriptionId = new Dictionary<string, string>();
     }
 
+    /// <summary>
+    /// Grain激活时调用
+    /// 输出激活日志信息
+    /// </summary>
+    /// <param name="cancellationToken">取消令牌</param>
     public override async Task OnActivateAsync(CancellationToken cancellationToken)
     {
         Console.WriteLine($"[NotificationConsumerGrain {this.GetPrimaryKeyString()}] Activated");
@@ -30,6 +60,12 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         Console.WriteLine($"[NotificationConsumerGrain] Active subscriptions: {_subscriptions.Count}");
     }
 
+    /// <summary>
+    /// Grain停用时调用
+    /// 取消所有订阅并清理资源
+    /// </summary>
+    /// <param name="reason">停用原因</param>
+    /// <param name="cancellationToken">取消令牌</param>
     public override async Task OnDeactivateAsync(DeactivationReason reason, CancellationToken cancellationToken)
     {
         Console.WriteLine($"[NotificationConsumerGrain {this.GetPrimaryKeyString()}] Deactivating. Reason: {reason.Description}");
@@ -51,6 +87,12 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         _streamToSubscriptionId.Clear();
     }
 
+    /// <summary>
+    /// 订阅指定的流
+    /// </summary>
+    /// <param name="streamId">流ID</param>
+    /// <param name="providerName">提供者名称</param>
+    /// <returns>订阅ID</returns>
     public async Task<string> SubscribeAsync(string streamId, string providerName)
     {
         if (string.IsNullOrEmpty(streamId))
@@ -93,6 +135,10 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         }
     }
 
+    /// <summary>
+    /// 取消指定订阅ID的订阅
+    /// </summary>
+    /// <param name="subscriptionId">订阅ID</param>
     public async Task UnsubscribeAsync(string subscriptionId)
     {
         if (string.IsNullOrEmpty(subscriptionId))
@@ -127,6 +173,10 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         }
     }
 
+    /// <summary>
+    /// 取消对指定流的订阅
+    /// </summary>
+    /// <param name="streamId">流ID</param>
     public async Task UnsubscribeFromStreamAsync(string streamId)
     {
         if (string.IsNullOrEmpty(streamId))
@@ -143,12 +193,21 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         await UnsubscribeAsync(subscriptionId);
     }
 
+    /// <summary>
+    /// 获取所有接收到的消息
+    /// </summary>
+    /// <returns>通知消息列表</returns>
     public Task<List<StreamMessage>> GetReceivedMessagesAsync()
     {
         Console.WriteLine($"[NotificationConsumerGrain] Returning {_receivedMessages.State.Count} received messages");
         return Task.FromResult(_receivedMessages.State);
     }
 
+    /// <summary>
+    /// 根据日志级别获取消息
+    /// </summary>
+    /// <param name="level">日志级别（如ERROR、WARNING、INFO）</param>
+    /// <returns>筛选后的通知消息列表</returns>
     public Task<List<StreamMessage>> GetReceivedMessagesByLevelAsync(string level)
     {
         var filteredMessages = _receivedMessages.State
@@ -159,6 +218,11 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         return Task.FromResult(filteredMessages);
     }
 
+    /// <summary>
+    /// 根据消息来源获取消息
+    /// </summary>
+    /// <param name="source">消息来源</param>
+    /// <returns>筛选后的通知消息列表</returns>
     public Task<List<StreamMessage>> GetReceivedMessagesBySourceAsync(string source)
     {
         var filteredMessages = _receivedMessages.State
@@ -169,11 +233,19 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         return Task.FromResult(filteredMessages);
     }
 
+    /// <summary>
+    /// 获取消息总数
+    /// </summary>
+    /// <returns>消息数量</returns>
     public Task<int> GetMessageCountAsync()
     {
         return Task.FromResult(_receivedMessages.State.Count);
     }
 
+    /// <summary>
+    /// 获取按日志级别分组的消息数量统计
+    /// </summary>
+    /// <returns>日志级别到数量的映射字典</returns>
     public Task<Dictionary<string, int>> GetMessageCountByLevelAsync()
     {
         var counts = _receivedMessages.State
@@ -185,11 +257,18 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         return Task.FromResult(counts);
     }
 
+    /// <summary>
+    /// 获取已订阅的流列表
+    /// </summary>
+    /// <returns>流ID列表</returns>
     public Task<List<string>> GetSubscribedStreamsAsync()
     {
         return Task.FromResult(_streamToSubscriptionId.Keys.ToList());
     }
 
+    /// <summary>
+    /// 清空所有消息
+    /// </summary>
     public async Task ClearMessagesAsync()
     {
         var count = _receivedMessages.State.Count;
@@ -199,6 +278,10 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
         Console.WriteLine($"[NotificationConsumerGrain] Cleared {count} messages");
     }
 
+    /// <summary>
+    /// 清空指定级别的消息
+    /// </summary>
+    /// <param name="level">日志级别</param>
     public async Task ClearMessagesByLevelAsync(string level)
     {
         var toRemove = _receivedMessages.State
@@ -215,12 +298,33 @@ public class NotificationConsumerGrain : Grain, IStreamConsumerGrain
     }
 }
 
+/// <summary>
+/// 通知流观察者类
+/// 实现IAsyncObserver接口，处理接收到的通知消息
+/// 支持错误告警和警告通知的自动发送
+/// </summary>
 public class NotificationStreamObserver : IAsyncObserver<StreamMessage>
 {
+    /// <summary>
+    /// 消费者ID标识
+    /// </summary>
     private readonly string _consumerId;
+
+    /// <summary>
+    /// 接收消息的持久化状态
+    /// </summary>
     private readonly IPersistentState<List<StreamMessage>> _receivedMessages;
+
+    /// <summary>
+    /// 消息计数器
+    /// </summary>
     private int _messageCount;
 
+    /// <summary>
+    /// 构造函数
+    /// </summary>
+    /// <param name="consumerId">消费者ID</param>
+    /// <param name="receivedMessages">接收消息的持久化状态</param>
     public NotificationStreamObserver(string consumerId, IPersistentState<List<StreamMessage>> receivedMessages)
     {
         _consumerId = consumerId;
@@ -228,6 +332,12 @@ public class NotificationStreamObserver : IAsyncObserver<StreamMessage>
         _messageCount = 0;
     }
 
+    /// <summary>
+    /// 接收到新消息时的处理逻辑
+    /// 保存消息并输出日志，根据级别触发告警
+    /// </summary>
+    /// <param name="item">流消息</param>
+    /// <param name="token">流序列令牌</param>
     public async Task OnNextAsync(StreamMessage item, StreamSequenceToken? token = null)
     {
         _messageCount++;
@@ -258,6 +368,9 @@ public class NotificationStreamObserver : IAsyncObserver<StreamMessage>
         }
     }
 
+    /// <summary>
+    /// 流完成时的处理逻辑
+    /// </summary>
     public Task OnCompletedAsync()
     {
         Console.WriteLine($"[NotificationStreamObserver {_consumerId}] Stream completed");
@@ -265,6 +378,10 @@ public class NotificationStreamObserver : IAsyncObserver<StreamMessage>
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 流发生错误时的处理逻辑
+    /// </summary>
+    /// <param name="ex">异常对象</param>
     public Task OnErrorAsync(Exception ex)
     {
         Console.WriteLine($"[NotificationStreamObserver {_consumerId}] Stream error occurred");
@@ -273,6 +390,10 @@ public class NotificationStreamObserver : IAsyncObserver<StreamMessage>
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 发送错误告警
+    /// </summary>
+    /// <param name="message">错误消息</param>
     private async Task SendErrorAlertAsync(StreamMessage message)
     {
         var source = message.Metadata.ContainsKey("Source") ? message.Metadata["Source"].ToString() : "Unknown";
@@ -281,6 +402,10 @@ public class NotificationStreamObserver : IAsyncObserver<StreamMessage>
         await Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 发送警告通知
+    /// </summary>
+    /// <param name="message">警告消息</param>
     private async Task SendWarningNotificationAsync(StreamMessage message)
     {
         var source = message.Metadata.ContainsKey("Source") ? message.Metadata["Source"].ToString() : "Unknown";

@@ -6,14 +6,43 @@ using System.Linq;
 
 namespace MCS.Grains.Grains;
 
+/// <summary>
+/// 聊天室消费者Grain实现类
+/// 负责订阅聊天室消息流，接收并存储聊天消息
+/// 支持加入/离开聊天室、获取历史消息等功能
+/// </summary>
 public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
 {
+    /// <summary>
+    /// 流提供者，用于获取消息流
+    /// </summary>
     private readonly IStreamProvider _streamProvider;
+
+    /// <summary>
+    /// 持久化状态，存储接收到的聊天消息列表
+    /// </summary>
     private readonly IPersistentState<List<ChatMessage>> _receivedMessages;
+
+    /// <summary>
+    /// 订阅句柄字典，键为订阅ID，值为流订阅句柄
+    /// </summary>
     private readonly Dictionary<string, StreamSubscriptionHandle<ChatMessage>> _subscriptions;
+
+    /// <summary>
+    /// 房间到订阅ID的映射字典
+    /// </summary>
     private readonly Dictionary<string, string> _roomToSubscriptionId;
+
+    /// <summary>
+    /// 用户ID到用户名的映射字典
+    /// </summary>
     private readonly Dictionary<string, string> _userIdToUserName;
 
+    /// <summary>
+    /// 构造函数，注入流提供者和持久化状态
+    /// </summary>
+    /// <param name="streamProvider">流提供者</param>
+    /// <param name="receivedMessages">接收消息的持久化状态</param>
     public ChatRoomConsumerGrain(
         IStreamProvider streamProvider,
         [PersistentState("chatRoomMessages", "Default")] IPersistentState<List<ChatMessage>> receivedMessages)
@@ -25,6 +54,11 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         _userIdToUserName = new Dictionary<string, string>();
     }
 
+    /// <summary>
+    /// Grain激活时调用
+    /// 输出激活日志信息
+    /// </summary>
+    /// <param name="cancellationToken">取消令牌</param>
     public override async Task OnActivateAsync(CancellationToken cancellationToken)
     {
         Console.WriteLine($"[ChatRoomConsumerGrain {this.GetPrimaryKeyString()}] Activated");
@@ -32,6 +66,12 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         Console.WriteLine($"[ChatRoomConsumerGrain] Active subscriptions: {_subscriptions.Count}");
     }
 
+    /// <summary>
+    /// Grain停用时调用
+    /// 取消所有订阅并清理资源
+    /// </summary>
+    /// <param name="reason">停用原因</param>
+    /// <param name="cancellationToken">取消令牌</param>
     public override async Task OnDeactivateAsync(DeactivationReason reason, CancellationToken cancellationToken)
     {
         switch (reason.ReasonCode)
@@ -84,6 +124,15 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         _userIdToUserName.Clear();
     }
 
+    /// <summary>
+    /// 加入聊天室
+    /// 订阅指定房间的消息流
+    /// </summary>
+    /// <param name="roomId">房间ID</param>
+    /// <param name="userId">用户ID</param>
+    /// <param name="userName">用户名</param>
+    /// <param name="producerId">生产者Grain ID（可选）</param>
+    /// <returns>订阅ID</returns>
     public async Task<string> JoinRoomAsync(string roomId, string userId, string userName, string producerId = "chat-room-service")
     {
         if (string.IsNullOrEmpty(roomId))
@@ -132,6 +181,16 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         }
     }
 
+    /// <summary>
+    /// 加入聊天室并加载历史消息
+    /// 订阅指定房间的消息流，并加载指定数量的历史消息
+    /// </summary>
+    /// <param name="roomId">房间ID</param>
+    /// <param name="userId">用户ID</param>
+    /// <param name="userName">用户名</param>
+    /// <param name="historyLimit">历史消息数量限制</param>
+    /// <param name="producerId">生产者Grain ID（可选）</param>
+    /// <returns>订阅ID</returns>
     public async Task<string> JoinRoomWithHistoryAsync(string roomId, string userId, string userName, int historyLimit = 100, string producerId = "chat-room-service")
     {
         if (string.IsNullOrEmpty(roomId))
@@ -200,6 +259,11 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         }
     }
 
+    /// <summary>
+    /// 离开聊天室
+    /// 取消对指定房间的订阅
+    /// </summary>
+    /// <param name="roomId">房间ID</param>
     public async Task LeaveRoomAsync(string roomId)
     {
         if (string.IsNullOrEmpty(roomId))
@@ -231,12 +295,21 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         }
     }
 
+    /// <summary>
+    /// 获取所有接收到的消息
+    /// </summary>
+    /// <returns>聊天消息列表</returns>
     public Task<List<ChatMessage>> GetReceivedMessagesAsync()
     {
         Console.WriteLine($"[ChatRoomConsumerGrain] Returning {_receivedMessages.State.Count} received messages");
         return Task.FromResult(_receivedMessages.State);
     }
 
+    /// <summary>
+    /// 根据发送者ID获取消息
+    /// </summary>
+    /// <param name="senderId">发送者ID</param>
+    /// <returns>筛选后的聊天消息列表</returns>
     public Task<List<ChatMessage>> GetMessagesBySenderAsync(string senderId)
     {
         var filteredMessages = _receivedMessages.State
@@ -247,6 +320,11 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         return Task.FromResult(filteredMessages);
     }
 
+    /// <summary>
+    /// 根据消息类型获取消息
+    /// </summary>
+    /// <param name="messageType">消息类型</param>
+    /// <returns>筛选后的聊天消息列表</returns>
     public Task<List<ChatMessage>> GetMessagesByTypeAsync(string messageType)
     {
         var filteredMessages = _receivedMessages.State
@@ -257,11 +335,19 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         return Task.FromResult(filteredMessages);
     }
 
+    /// <summary>
+    /// 获取消息总数
+    /// </summary>
+    /// <returns>消息数量</returns>
     public Task<int> GetMessageCountAsync()
     {
         return Task.FromResult(_receivedMessages.State.Count);
     }
 
+    /// <summary>
+    /// 获取按类型分组的消息数量统计
+    /// </summary>
+    /// <returns>消息类型到数量的映射字典</returns>
     public Task<Dictionary<string, int>> GetMessageCountByTypeAsync()
     {
         var counts = _receivedMessages.State
@@ -272,11 +358,18 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         return Task.FromResult(counts);
     }
 
+    /// <summary>
+    /// 获取已加入的房间列表
+    /// </summary>
+    /// <returns>房间ID列表</returns>
     public Task<List<string>> GetJoinedRoomsAsync()
     {
         return Task.FromResult(_roomToSubscriptionId.Keys.ToList());
     }
 
+    /// <summary>
+    /// 清空所有消息
+    /// </summary>
     public async Task ClearMessagesAsync()
     {
         var count = _receivedMessages.State.Count;
@@ -286,6 +379,10 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
         Console.WriteLine($"[ChatRoomConsumerGrain] Cleared {count} messages");
     }
 
+    /// <summary>
+    /// 清空指定房间的消息
+    /// </summary>
+    /// <param name="roomId">房间ID</param>
     public async Task ClearMessagesByRoomAsync(string roomId)
     {
         var toRemove = _receivedMessages.State
@@ -302,12 +399,32 @@ public class ChatRoomConsumerGrain : Grain, IChatRoomConsumerGrain
     }
 }
 
+/// <summary>
+/// 聊天室流观察者类
+/// 实现IAsyncObserver接口，处理接收到的聊天消息
+/// </summary>
 public class ChatRoomStreamObserver : IAsyncObserver<ChatMessage>
 {
+    /// <summary>
+    /// 消费者ID标识
+    /// </summary>
     private readonly string _consumerId;
+
+    /// <summary>
+    /// 接收消息的持久化状态
+    /// </summary>
     private readonly IPersistentState<List<ChatMessage>> _receivedMessages;
+
+    /// <summary>
+    /// 消息计数器
+    /// </summary>
     private int _messageCount;
 
+    /// <summary>
+    /// 构造函数
+    /// </summary>
+    /// <param name="consumerId">消费者ID</param>
+    /// <param name="receivedMessages">接收消息的持久化状态</param>
     public ChatRoomStreamObserver(string consumerId, IPersistentState<List<ChatMessage>> receivedMessages)
     {
         _consumerId = consumerId;
@@ -315,6 +432,12 @@ public class ChatRoomStreamObserver : IAsyncObserver<ChatMessage>
         _messageCount = 0;
     }
 
+    /// <summary>
+    /// 接收到新消息时的处理逻辑
+    /// 保存消息并输出日志
+    /// </summary>
+    /// <param name="item">聊天消息</param>
+    /// <param name="token">流序列令牌</param>
     public async Task OnNextAsync(ChatMessage item, StreamSequenceToken? token = null)
     {
         _messageCount++;
@@ -340,6 +463,9 @@ public class ChatRoomStreamObserver : IAsyncObserver<ChatMessage>
         }
     }
 
+    /// <summary>
+    /// 流完成时的处理逻辑
+    /// </summary>
     public Task OnCompletedAsync()
     {
         Console.WriteLine($"[ChatRoomStreamObserver {_consumerId}] Stream completed");
@@ -347,6 +473,10 @@ public class ChatRoomStreamObserver : IAsyncObserver<ChatMessage>
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 流发生错误时的处理逻辑
+    /// </summary>
+    /// <param name="ex">异常对象</param>
     public Task OnErrorAsync(Exception ex)
     {
         Console.WriteLine($"[ChatRoomStreamObserver {_consumerId}] Stream error occurred");
@@ -355,6 +485,10 @@ public class ChatRoomStreamObserver : IAsyncObserver<ChatMessage>
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 处理系统消息
+    /// </summary>
+    /// <param name="message">系统消息</param>
     private async Task HandleSystemMessageAsync(ChatMessage message)
     {
         var action = message.Metadata.ContainsKey("Action") ? message.Metadata["Action"].ToString() : "unknown";

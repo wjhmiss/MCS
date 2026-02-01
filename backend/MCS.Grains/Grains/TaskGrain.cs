@@ -1,5 +1,6 @@
 using Orleans;
 using Orleans.Runtime;
+using Orleans.Streams;
 using MCS.Grains.Interfaces;
 using MCS.Grains.Models;
 using MCS.Grains.Services;
@@ -11,6 +12,7 @@ namespace MCS.Grains.Grains;
 /// 任务Grain实现类，用于创建和管理异步任务
 /// 支持任务执行、重试机制、状态跟踪等功能
 /// 支持 MQTT 发布/订阅、HTTP API 调用、等待 Controller 调用等功能
+/// 使用 Orleans Stream 实现任务完成通知
 /// </summary>
 public class TaskGrain : Grain, ITaskGrain, IRemindable
 {
@@ -35,6 +37,36 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
     private readonly ILogger<TaskGrain> _logger;
 
     /// <summary>
+    /// 流提供者名称
+    /// </summary>
+    private const string StreamProviderName = "SMS";
+
+    /// <summary>
+    /// 任务完成通知流命名空间
+    /// </summary>
+    private const string TaskCompletionNamespace = "TaskCompletion";
+
+    /// <summary>
+    /// 等待类型枚举
+    /// </summary>
+    private enum WaitType
+    {
+        None,
+        MqttMessage,
+        ControllerCall
+    }
+
+    /// <summary>
+    /// 当前等待类型
+    /// </summary>
+    private WaitType _currentWaitType = WaitType.None;
+
+    /// <summary>
+    /// 所属工作流ID（用于流通知）
+    /// </summary>
+    private string? _workflowId;
+
+    /// <summary>
     /// 构造函数，注入持久化状态和服务
     /// </summary>
     /// <param name="state">持久化状态对象</param>
@@ -51,6 +83,48 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
         _mqttService = mqttService;
         _httpApiService = httpApiService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 获取任务完成通知流
+    /// </summary>
+    private IAsyncStream<TaskCompletionEvent> GetTaskCompletionStream()
+    {
+        var streamProvider = this.GetStreamProvider(StreamProviderName);
+        var streamId = StreamId.Create(TaskCompletionNamespace, _workflowId ?? "default");
+        return streamProvider.GetStream<TaskCompletionEvent>(streamId);
+    }
+
+    /// <summary>
+    /// 发送任务完成通知到工作流
+    /// </summary>
+    private async Task NotifyWorkflowTaskCompletedAsync()
+    {
+        if (string.IsNullOrEmpty(_workflowId))
+        {
+            _logger.LogWarning("Cannot notify workflow: WorkflowId is null");
+            return;
+        }
+
+        try
+        {
+            var stream = GetTaskCompletionStream();
+            var completionEvent = new TaskCompletionEvent
+            {
+                TaskId = _state.State.TaskId,
+                WorkflowId = _workflowId,
+                Status = _state.State.Status,
+                Result = _state.State.Result,
+                CompletedAt = DateTime.UtcNow
+            };
+
+            await stream.OnNextAsync(completionEvent);
+            _logger.LogInformation("Task completion notification sent to workflow: {WorkflowId}", _workflowId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send task completion notification");
+        }
     }
 
     /// <summary>
@@ -143,6 +217,9 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
             await _state.WriteStateAsync();
 
             _logger.LogInformation("Task completed: {TaskName}", _state.State.Name);
+
+            // 【关键】普通任务完成时，也通过 Stream 通知工作流
+            await NotifyWorkflowTaskCompletedAsync();
         }
         catch (Exception ex)
         {
@@ -151,6 +228,10 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
             _state.State.ErrorMessage = ex.Message;
             _state.State.Status = Models.TaskStatus.Failed;
             _state.State.CompletedAt = DateTime.UtcNow;
+            await _state.WriteStateAsync();
+
+            // 任务失败时也通知工作流
+            await NotifyWorkflowTaskCompletedAsync();
 
             if (_state.State.RetryCount < _state.State.MaxRetries)
             {
@@ -158,10 +239,6 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
                 await _state.WriteStateAsync();
                 _logger.LogInformation("Retrying task: {TaskName}, attempt {RetryCount}", _state.State.Name, _state.State.RetryCount);
                 await ExecuteAsync();
-            }
-            else
-            {
-                await _state.WriteStateAsync();
             }
         }
     }
@@ -315,25 +392,38 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
     }
 
     /// <summary>
-    /// 等待 MQTT 消息
+    /// 等待 MQTT 消息（使用 Reminder 机制）
+    /// 设置等待状态并注册 Reminder，ExecuteAsync 立即返回
+    /// 当收到消息或 Reminder 触发时，通过 ContinueAsync 恢复执行
     /// </summary>
     private async Task WaitForMqttMessageAsync()
     {
         try
         {
-            _logger.LogInformation("Waiting for MQTT message on topic: {Topic}", _state.State.MqttSubscribeTopic);
+            _logger.LogInformation("Setting up MQTT message wait on topic: {Topic}", _state.State.MqttSubscribeTopic);
 
             _state.State.Status = Models.TaskStatus.WaitingForMqtt;
             _state.State.WaitingState = "WaitingForMqtt";
             await _state.WriteStateAsync();
 
+            // 设置当前等待类型
+            _currentWaitType = WaitType.MqttMessage;
+
+            // 订阅 MQTT 主题
             await _mqttService.SubscribeAsync(_state.State.MqttSubscribeTopic!, OnMqttMessageReceivedAsync);
 
-            _logger.LogInformation("Subscribed to MQTT topic: {Topic}", _state.State.MqttSubscribeTopic);
+            // 注册 Reminder 用于超时检查（每30秒检查一次）
+            await this.RegisterOrUpdateReminder(
+                "MqttWaitTimeout",
+                TimeSpan.FromSeconds(30),  // 首次触发延迟
+                TimeSpan.FromSeconds(30)); // 周期触发
+
+            _logger.LogInformation("Task is now waiting for MQTT message. ExecuteAsync will return.");
+            // 【关键】方法立即返回，不阻塞！工作流会暂停在这里
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to wait for MQTT message");
+            _logger.LogError(ex, "Failed to setup MQTT message wait");
             _state.State.Status = Models.TaskStatus.Failed;
             _state.State.ErrorMessage = ex.Message;
             await _state.WriteStateAsync();
@@ -342,23 +432,35 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
     }
 
     /// <summary>
-    /// 等待 Controller 调用
+    /// 等待 Controller 调用（使用 Reminder 机制）
+    /// 设置等待状态并注册 Reminder，ExecuteAsync 立即返回
+    /// 当收到调用或 Reminder 触发时，通过 ContinueAsync 恢复执行
     /// </summary>
     private async Task WaitForControllerCallAsync()
     {
         try
         {
-            _logger.LogInformation("Waiting for Controller call");
+            _logger.LogInformation("Setting up Controller call wait");
 
             _state.State.Status = Models.TaskStatus.WaitingForController;
             _state.State.WaitingState = "WaitingForController";
             await _state.WriteStateAsync();
 
-            _logger.LogInformation("Task is now waiting for Controller call");
+            // 设置当前等待类型
+            _currentWaitType = WaitType.ControllerCall;
+
+            // 注册 Reminder 用于超时检查（每30秒检查一次）
+            await this.RegisterOrUpdateReminder(
+                "ControllerWaitTimeout",
+                TimeSpan.FromSeconds(30),  // 首次触发延迟
+                TimeSpan.FromSeconds(30)); // 周期触发
+
+            _logger.LogInformation("Task is now waiting for Controller call. ExecuteAsync will return.");
+            // 【关键】方法立即返回，不阻塞！工作流会暂停在这里
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to wait for Controller call");
+            _logger.LogError(ex, "Failed to setup Controller call wait");
             _state.State.Status = Models.TaskStatus.Failed;
             _state.State.ErrorMessage = ex.Message;
             await _state.WriteStateAsync();
@@ -383,6 +485,7 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
     public async Task SetWorkflowAsync(string workflowId)
     {
         _state.State.WorkflowId = workflowId;
+        _workflowId = workflowId;  // 同时保存到内存字段，用于流通知
         await _state.WriteStateAsync();
     }
 
@@ -503,6 +606,7 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
 
     /// <summary>
     /// 收到 MQTT 消息时调用
+    /// 使用 Reminder 机制：消息到达后，通过 Reminder 触发 ContinueAsync 恢复工作流
     /// </summary>
     /// <param name="topic">主题</param>
     /// <param name="message">消息内容</param>
@@ -510,16 +614,38 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
     {
         _logger.LogInformation("MQTT message received: {Topic}, Message: {Message}", topic, message);
 
+        // 检查任务是否正在等待 MQTT 消息
+        if (_state.State.Status != Models.TaskStatus.WaitingForMqtt)
+        {
+            _logger.LogWarning("Task is not in WaitingForMqtt status, ignoring message");
+            return;
+        }
+
+        // 保存消息到状态
         _state.State.MqttReceivedMessage = message;
-        _state.State.Status = Models.TaskStatus.Completed;
-        _state.State.CompletedAt = DateTime.UtcNow;
         _state.State.Result = $"Received MQTT message: {message}";
-        _state.State.WaitingState = null;
         await _state.WriteStateAsync();
 
+        // 取消订阅
         await _mqttService.UnsubscribeAsync(topic);
 
-        _logger.LogInformation("Task completed after receiving MQTT message");
+        // 重置等待类型
+        _currentWaitType = WaitType.None;
+
+        // 取消 Reminder
+        var reminder = await this.GetReminder("MqttWaitTimeout");
+        if (reminder != null)
+        {
+            await this.UnregisterReminder(reminder);
+        }
+
+        _logger.LogInformation("MQTT message processed, task will be completed via Reminder");
+
+        // 注册一个立即触发的 Reminder 来恢复执行
+        await this.RegisterOrUpdateReminder(
+            "ContinueAfterMqtt",
+            TimeSpan.FromSeconds(1),  // 1秒后触发
+            TimeSpan.FromMinutes(1)); // 只触发一次
     }
 
     /// <summary>
@@ -542,45 +668,192 @@ public class TaskGrain : Grain, ITaskGrain, IRemindable
 
     /// <summary>
     /// Controller 调用时触发
+    /// 使用 Reminder 机制：调用到达后，通过 Reminder 触发 ContinueAsync 恢复工作流
     /// </summary>
     /// <param name="data">调用数据</param>
     public async Task OnControllerCallAsync(Dictionary<string, object> data)
     {
         _logger.LogInformation("Controller call received: {Data}", data);
 
+        // 检查任务是否正在等待 Controller 调用
+        if (_state.State.Status != Models.TaskStatus.WaitingForController)
+        {
+            _logger.LogWarning("Task is not in WaitingForController status, ignoring call");
+            return;
+        }
+
+        // 保存调用数据到状态
         _state.State.ControllerCallData = data;
-        _state.State.Status = Models.TaskStatus.Completed;
-        _state.State.CompletedAt = DateTime.UtcNow;
         _state.State.Result = $"Controller call received: {string.Join(", ", data.Select(kv => $"{kv.Key}={kv.Value}"))}";
-        _state.State.WaitingState = null;
         await _state.WriteStateAsync();
 
-        _logger.LogInformation("Task completed after Controller call");
+        // 重置等待类型
+        _currentWaitType = WaitType.None;
+
+        // 取消 Reminder
+        var reminder = await this.GetReminder("ControllerWaitTimeout");
+        if (reminder != null)
+        {
+            await this.UnregisterReminder(reminder);
+        }
+
+        _logger.LogInformation("Controller call processed, task will be completed via Reminder");
+
+        // 注册一个立即触发的 Reminder 来恢复执行
+        await this.RegisterOrUpdateReminder(
+            "ContinueAfterController",
+            TimeSpan.FromSeconds(1),  // 1秒后触发
+            TimeSpan.FromMinutes(1)); // 只触发一次
     }
 
     /// <summary>
     /// 继续执行任务（从等待状态恢复）
+    /// 由 Reminder 触发，完成等待中的任务，并通过 Stream 通知工作流
     /// </summary>
     public async Task ContinueAsync()
     {
-        _logger.LogInformation("Continuing task execution");
+        _logger.LogInformation("Continuing task execution from waiting state");
 
-        _state.State.Status = Models.TaskStatus.Running;
+        // 检查是否有等待结果
+        if (_state.State.Status == Models.TaskStatus.WaitingForMqtt ||
+            _state.State.Status == Models.TaskStatus.WaitingForController)
+        {
+            // 任务仍在等待中，不应该调用 ContinueAsync
+            _logger.LogWarning("Task is still waiting, cannot continue yet");
+            return;
+        }
+
+        // 任务已经有结果了（通过 OnMqttMessageReceivedAsync 或 OnControllerCallAsync 设置）
+        // 直接标记为完成
+        _state.State.Status = Models.TaskStatus.Completed;
+        _state.State.CompletedAt = DateTime.UtcNow;
         _state.State.WaitingState = null;
         await _state.WriteStateAsync();
 
-        await ExecuteAsync();
+        _logger.LogInformation("Task completed from waiting state: {TaskName}", _state.State.Name);
+
+        // 【关键】通过 Orleans Stream 通知工作流任务已完成
+        await NotifyWorkflowTaskCompletedAsync();
+    }
+
+    /// <summary>
+    /// 暂停任务
+    /// 将任务状态设置为 Paused，任务将停止执行直到被恢复
+    /// </summary>
+    public async Task PauseAsync()
+    {
+        _logger.LogInformation("Pausing task: {TaskName}", _state.State.Name);
+
+        // 只有正在运行或等待中的任务可以暂停
+        if (_state.State.Status != Models.TaskStatus.Running &&
+            _state.State.Status != Models.TaskStatus.WaitingForMqtt &&
+            _state.State.Status != Models.TaskStatus.WaitingForController)
+        {
+            _logger.LogWarning("Task {TaskName} cannot be paused from status {Status}", 
+                _state.State.Name, _state.State.Status);
+            return;
+        }
+
+        // 保存暂停前的状态
+        _state.State.WaitingState = _state.State.Status.ToString();
+        _state.State.Status = Models.TaskStatus.Paused;
+        await _state.WriteStateAsync();
+
+        _logger.LogInformation("Task paused: {TaskName}", _state.State.Name);
+    }
+
+    /// <summary>
+    /// 恢复任务（从暂停状态继续）
+    /// 将任务状态恢复到暂停前的状态
+    /// </summary>
+    public async Task ResumeAsync()
+    {
+        _logger.LogInformation("Resuming task: {TaskName}", _state.State.Name);
+
+        // 只有暂停的任务可以恢复
+        if (_state.State.Status != Models.TaskStatus.Paused)
+        {
+            _logger.LogWarning("Task {TaskName} is not paused, cannot resume from status {Status}", 
+                _state.State.Name, _state.State.Status);
+            return;
+        }
+
+        // 恢复到暂停前的状态
+        if (!string.IsNullOrEmpty(_state.State.WaitingState))
+        {
+            if (Enum.TryParse<Models.TaskStatus>(_state.State.WaitingState, out var previousStatus))
+            {
+                _state.State.Status = previousStatus;
+            }
+            else
+            {
+                _state.State.Status = Models.TaskStatus.Running;
+            }
+        }
+        else
+        {
+            _state.State.Status = Models.TaskStatus.Running;
+        }
+
+        _state.State.WaitingState = null;
+        await _state.WriteStateAsync();
+
+        _logger.LogInformation("Task resumed: {TaskName}, status restored to {Status}", 
+            _state.State.Name, _state.State.Status);
     }
 
     /// <summary>
     /// ReceiveReminder 方法实现（IRemindable 接口）
-    /// 用于超时处理等场景
+    /// 处理各种 Reminder 触发事件
     /// </summary>
     /// <param name="reminderName">Reminder 名称</param>
     /// <param name="status">Reminder 状态</param>
-    public Task ReceiveReminder(string reminderName, TickStatus status)
+    public async Task ReceiveReminder(string reminderName, TickStatus status)
     {
         _logger.LogInformation("Reminder received: {ReminderName}", reminderName);
-        return Task.CompletedTask;
+
+        switch (reminderName)
+        {
+            case "MqttWaitTimeout":
+            case "ControllerWaitTimeout":
+                // 等待超时检查
+                await HandleWaitTimeoutAsync(reminderName);
+                break;
+
+            case "ContinueAfterMqtt":
+            case "ContinueAfterController":
+                // 收到消息/调用后，通过 Reminder 恢复执行
+                await this.UnregisterReminder(await this.GetReminder(reminderName)!);
+                await ContinueAsync();
+                break;
+
+            default:
+                _logger.LogWarning("Unknown reminder: {ReminderName}", reminderName);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 处理等待超时
+    /// </summary>
+    private async Task HandleWaitTimeoutAsync(string reminderName)
+    {
+        _logger.LogWarning("Wait timeout check triggered: {ReminderName}", reminderName);
+
+        // 检查任务是否还在等待中
+        if (_state.State.Status != Models.TaskStatus.WaitingForMqtt &&
+            _state.State.Status != Models.TaskStatus.WaitingForController)
+        {
+            // 任务已完成，取消 Reminder
+            var reminder = await this.GetReminder(reminderName);
+            if (reminder != null)
+            {
+                await this.UnregisterReminder(reminder);
+            }
+            return;
+        }
+
+        // 可以在这里添加超时逻辑，比如等待超过一定时间后自动失败
+        // 目前只是定期检查，等待外部事件
     }
 }

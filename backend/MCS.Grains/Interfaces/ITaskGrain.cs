@@ -120,4 +120,14 @@ public interface ITaskGrain : IGrainWithStringKey
     /// 继续执行任务（从等待状态恢复）
     /// </summary>
     Task ContinueAsync();
+
+    /// <summary>
+    /// 暂停任务
+    /// </summary>
+    Task PauseAsync();
+
+    /// <summary>
+    /// 恢复任务（从暂停状态继续）
+    /// </summary>
+    Task ResumeAsync();
 }

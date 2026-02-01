@@ -7,6 +7,7 @@ public enum WorkflowStatus
 {
     Created,
     Running,
+    WaitingForTask,
     Completed,
     Failed,
     Paused,

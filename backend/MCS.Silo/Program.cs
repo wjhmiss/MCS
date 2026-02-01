@@ -8,6 +8,7 @@ using Orleans.Hosting;
 using Orleans.Persistence.AdoNet;
 using Orleans.Reminders.AdoNet;
 using Orleans.Clustering.AdoNet;
+using Orleans.Streams;
 using StackExchange.Redis;
 using SqlSugar;
 using System.Net;
@@ -151,6 +152,9 @@ var host = Host.CreateDefaultBuilder(args)
                 options.ConnectionString = postgresConnectionString;
             });
         }
+
+        // 添加 SimpleMessageStream 流提供者（内存实现，适合开发和测试）
+        siloBuilder.AddMemoryStreams("SMS");
 
         siloBuilder
             .Configure<SiloMessagingOptions>(options =>
