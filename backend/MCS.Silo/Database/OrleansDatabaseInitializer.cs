@@ -22,6 +22,11 @@ namespace MCS.Silo.Database
         {
             try
             {
+                _logger.LogInformation("开始初始化 Orleans 数据库...");
+
+                // 先确保数据库存在
+                await CreateDatabaseIfNotExistsAsync();
+
                 _logger.LogInformation("开始初始化 Orleans 数据库表...");
 
                 var existingTables = _db.DbMaintenance.GetTableInfoList();
@@ -60,6 +65,50 @@ namespace MCS.Silo.Database
             catch (Exception ex)
             {
                 _logger.LogError(ex, "初始化 Orleans 数据库表时发生错误");
+                throw;
+            }
+        }
+
+        private async Task CreateDatabaseIfNotExistsAsync()
+        {
+            try
+            {
+                _logger.LogInformation("检查数据库是否存在...");
+
+                // 解析连接字符串获取数据库名称
+                var builder = new NpgsqlConnectionStringBuilder(_connectionString);
+                var databaseName = builder.Database;
+
+                // 创建连接到 postgres 系统数据库的连接字符串
+                builder.Database = "postgres";
+                var masterConnectionString = builder.ConnectionString;
+
+                using var connection = new NpgsqlConnection(masterConnectionString);
+                await connection.OpenAsync();
+
+                // 检查数据库是否存在
+                var checkDbSql = "SELECT 1 FROM pg_database WHERE datname = @dbname";
+                using var checkCmd = new NpgsqlCommand(checkDbSql, connection);
+                checkCmd.Parameters.AddWithValue("@dbname", databaseName);
+                var exists = await checkCmd.ExecuteScalarAsync() != null;
+
+                if (!exists)
+                {
+                    _logger.LogInformation("数据库 {Database} 不存在，正在创建...", databaseName);
+                    // 创建数据库
+                    var createDbSql = $"CREATE DATABASE \"{databaseName}\"";
+                    using var createCmd = new NpgsqlCommand(createDbSql, connection);
+                    await createCmd.ExecuteNonQueryAsync();
+                    _logger.LogInformation("数据库 {Database} 创建成功", databaseName);
+                }
+                else
+                {
+                    _logger.LogInformation("数据库 {Database} 已存在", databaseName);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "创建数据库时发生错误");
                 throw;
             }
         }

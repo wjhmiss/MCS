@@ -1,193 +1,78 @@
+using Orleans.Serialization;
+
 namespace MCS.Grains.Models;
 
-/// <summary>
-/// 任务状态枚举
-/// </summary>
+[GenerateSerializer]
 public enum TaskStatus
 {
-    /// <summary>
-    /// 等待执行
-    /// </summary>
     Pending,
-    
-    /// <summary>
-    /// 正在执行
-    /// </summary>
     Running,
-    
-    /// <summary>
-    /// 执行完成
-    /// </summary>
     Completed,
-    
-    /// <summary>
-    /// 执行失败
-    /// </summary>
     Failed,
-    
-    /// <summary>
-    /// 已跳过
-    /// </summary>
     Skipped,
-
-    /// <summary>
-    /// 等待 MQTT 消息
-    /// </summary>
     WaitingForMqtt,
-
-    /// <summary>
-    /// 等待 Controller 调用
-    /// </summary>
     WaitingForController
 }
 
-/// <summary>
-/// 任务状态类，用于持久化存储任务的完整状态信息
-/// </summary>
+[GenerateSerializer]
 public class TaskState
 {
-    /// <summary>
-    /// 任务唯一标识符
-    /// </summary>
+    [Id(0)]
     public string TaskId { get; set; }
-    
-    /// <summary>
-    /// 任务名称
-    /// </summary>
+    [Id(1)]
     public string Name { get; set; }
-    
-    /// <summary>
-    /// 当前任务状态
-    /// </summary>
+    [Id(2)]
     public TaskStatus Status { get; set; }
-    
-    /// <summary>
-    /// 所属工作流ID（可为null）
-    /// </summary>
+    [Id(3)]
     public string? WorkflowId { get; set; }
-    
-    /// <summary>
-    /// 任务创建时间
-    /// </summary>
+    [Id(4)]
     public DateTime CreatedAt { get; set; }
-    
-    /// <summary>
-    /// 任务开始执行时间（可为null）
-    /// </summary>
+    [Id(5)]
     public DateTime? StartedAt { get; set; }
-    
-    /// <summary>
-    /// 任务完成时间（可为null）
-    /// </summary>
+    [Id(6)]
     public DateTime? CompletedAt { get; set; }
-    
-    /// <summary>
-    /// 任务执行结果（可为null）
-    /// </summary>
+    [Id(7)]
     public string? Result { get; set; }
-    
-    /// <summary>
-    /// 错误信息（可为null）
-    /// </summary>
+    [Id(8)]
     public string? ErrorMessage { get; set; }
-    
-    /// <summary>
-    /// 当前重试次数
-    /// </summary>
+    [Id(9)]
     public int RetryCount { get; set; }
-    
-    /// <summary>
-    /// 最大重试次数（默认为3）
-    /// </summary>
+    [Id(10)]
     public int MaxRetries { get; set; } = 3;
-
-    /// <summary>
-    /// MQTT 发布最大重试次数（-1 表示无限重试）
-    /// </summary>
+    [Id(11)]
     public int MqttPublishMaxRetries { get; set; } = -1;
-
-    /// <summary>
-    /// MQTT 发布当前重试次数
-    /// </summary>
+    [Id(12)]
     public int MqttPublishRetryCount { get; set; } = 0;
-
-    /// <summary>
-    /// HTTP API 调用最大重试次数（-1 表示无限重试）
-    /// </summary>
+    [Id(13)]
     public int ApiCallMaxRetries { get; set; } = -1;
-
-    /// <summary>
-    /// HTTP API 调用当前重试次数
-    /// </summary>
+    [Id(14)]
     public int ApiCallRetryCount { get; set; } = 0;
-
-    /// <summary>
-    /// 任务是否被停止
-    /// </summary>
+    [Id(15)]
     public bool IsStopped { get; set; } = false;
-
-    /// <summary>
-    /// 任务参数字典
-    /// </summary>
+    [Id(16)]
     public Dictionary<string, object> Parameters { get; set; } = new();
-
-    /// <summary>
-    /// MQTT 发布主题
-    /// </summary>
+    [Id(17)]
     public string? MqttPublishTopic { get; set; }
-
-    /// <summary>
-    /// MQTT 发布消息
-    /// </summary>
+    [Id(18)]
     public string? MqttPublishMessage { get; set; }
-
-    /// <summary>
-    /// MQTT 订阅主题（用于等待消息）
-    /// </summary>
+    [Id(19)]
     public string? MqttSubscribeTopic { get; set; }
-
-    /// <summary>
-    /// 是否等待 Controller 调用
-    /// </summary>
+    [Id(20)]
     public bool WaitForController { get; set; } = false;
-
-    /// <summary>
-    /// MQTT 消息内容（收到消息后存储）
-    /// </summary>
+    [Id(21)]
     public string? MqttReceivedMessage { get; set; }
-
-    /// <summary>
-    /// HTTP API 请求 URL
-    /// </summary>
+    [Id(22)]
     public string? ApiUrl { get; set; }
-
-    /// <summary>
-    /// HTTP 请求方法（GET/POST/PUT/DELETE）
-    /// </summary>
+    [Id(23)]
     public string? ApiMethod { get; set; }
-
-    /// <summary>
-    /// HTTP 请求头
-    /// </summary>
+    [Id(24)]
     public Dictionary<string, string> ApiHeaders { get; set; } = new();
-
-    /// <summary>
-    /// HTTP 请求体
-    /// </summary>
+    [Id(25)]
     public string? ApiBody { get; set; }
-
-    /// <summary>
-    /// HTTP 响应内容
-    /// </summary>
+    [Id(26)]
     public string? ApiResponse { get; set; }
-
-    /// <summary>
-    /// Controller 调用数据
-    /// </summary>
+    [Id(27)]
     public Dictionary<string, object>? ControllerCallData { get; set; }
-
-    /// <summary>
-    /// 等待状态（WaitingForMqtt/WaitingForController/None）
-    /// </summary>
+    [Id(28)]
     public string? WaitingState { get; set; }
 }

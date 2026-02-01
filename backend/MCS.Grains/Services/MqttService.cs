@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MQTTnet;
-using MQTTnet.Client;
 using MQTTnet.Protocol;
 
 namespace MCS.Grains.Services;
@@ -26,7 +25,7 @@ public class MqttService : IMqttService
         _subscriptions = new Dictionary<string, Func<string, string, Task>>();
         _config = config.Value;
 
-        var factory = new MqttFactory();
+        var factory = new MqttClientFactory();
         _mqttClient = factory.CreateMqttClient();
 
         _options = new MqttClientOptionsBuilder()

@@ -1,154 +1,63 @@
+using Orleans.Serialization;
+
 namespace MCS.Grains.Models;
 
-/// <summary>
-/// 工作流状态枚举
-/// </summary>
+[GenerateSerializer]
 public enum WorkflowStatus
 {
-    /// <summary>
-    /// 已创建
-    /// </summary>
     Created,
-    
-    /// <summary>
-    /// 正在运行
-    /// </summary>
     Running,
-    
-    /// <summary>
-    /// 已完成
-    /// </summary>
     Completed,
-    
-    /// <summary>
-    /// 执行失败
-    /// </summary>
     Failed,
-    
-    /// <summary>
-    /// 已暂停
-    /// </summary>
     Paused,
-
-    /// <summary>
-    /// 已停止
-    /// </summary>
     Stopped
 }
 
-/// <summary>
-/// 工作流类型枚举
-/// </summary>
+[GenerateSerializer]
 public enum WorkflowType
 {
-    /// <summary>
-    /// 串行执行（按顺序执行任务）
-    /// </summary>
     Serial,
-    
-    /// <summary>
-    /// 并行执行（同时执行所有任务）
-    /// </summary>
     Parallel,
-    
-    /// <summary>
-    /// 嵌套执行（包含子工作流）
-    /// </summary>
     Nested
 }
 
-/// <summary>
-/// 工作流状态类，用于持久化存储工作流的完整状态信息
-/// </summary>
+[GenerateSerializer]
 public class WorkflowState
 {
-    /// <summary>
-    /// 工作流唯一标识符
-    /// </summary>
+    [Id(0)]
     public string WorkflowId { get; set; }
-    
-    /// <summary>
-    /// 工作流名称
-    /// </summary>
+    [Id(1)]
     public string Name { get; set; }
-    
-    /// <summary>
-    /// 工作流类型
-    /// </summary>
+    [Id(2)]
     public WorkflowType Type { get; set; }
-    
-    /// <summary>
-    /// 当前工作流状态
-    /// </summary>
+    [Id(3)]
     public WorkflowStatus Status { get; set; }
-    
-    /// <summary>
-    /// 包含的任务ID列表
-    /// </summary>
+    [Id(4)]
     public List<string> TaskIds { get; set; } = new();
-    
-    /// <summary>
-    /// 当前执行的任务索引（用于串行工作流）
-    /// </summary>
+    [Id(5)]
     public int CurrentTaskIndex { get; set; }
-    
-    /// <summary>
-    /// 父工作流ID（可为null，用于嵌套工作流）
-    /// </summary>
+    [Id(6)]
     public string? ParentWorkflowId { get; set; }
-    
-    /// <summary>
-    /// 工作流创建时间
-    /// </summary>
+    [Id(7)]
     public DateTime CreatedAt { get; set; }
-    
-    /// <summary>
-    /// 工作流开始执行时间（可为null）
-    /// </summary>
+    [Id(8)]
     public DateTime? StartedAt { get; set; }
-    
-    /// <summary>
-    /// 工作流完成时间（可为null）
-    /// </summary>
+    [Id(9)]
     public DateTime? CompletedAt { get; set; }
-    
-    /// <summary>
-    /// 执行历史记录列表
-    /// </summary>
+    [Id(10)]
     public List<string> ExecutionHistory { get; set; } = new();
-    
-    /// <summary>
-    /// 自定义数据字典
-    /// </summary>
+    [Id(11)]
     public Dictionary<string, object> Data { get; set; } = new();
-
-    /// <summary>
-    /// 是否为定时工作流
-    /// </summary>
+    [Id(12)]
     public bool IsScheduled { get; set; }
-
-    /// <summary>
-    /// 定时间隔（毫秒）
-    /// </summary>
+    [Id(13)]
     public long? ScheduleInterval { get; set; }
-
-    /// <summary>
-    /// 是否循环执行
-    /// </summary>
+    [Id(14)]
     public bool IsLooped { get; set; }
-
-    /// <summary>
-    /// 循环次数（null 表示无限循环）
-    /// </summary>
+    [Id(15)]
     public int? LoopCount { get; set; }
-
-    /// <summary>
-    /// 当前循环次数
-    /// </summary>
+    [Id(16)]
     public int CurrentLoopCount { get; set; }
-
-    /// <summary>
-    /// Reminder 名称（用于定时执行）
-    /// </summary>
+    [Id(17)]
     public string? ReminderName { get; set; }
 }

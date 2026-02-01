@@ -9,11 +9,40 @@ using MCS.Grains.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// 辅助方法：获取配置并验证
+static string GetRequiredConfig(IConfiguration configuration, string key)
+{
+    var value = configuration[key];
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        throw new InvalidOperationException($"配置项 '{key}' 未设置或为空，请在 appsettings.json 或环境变量中配置。");
+    }
+    Console.WriteLine($"[Config] {key} = {value}");
+    return value;
+}
+
+static int GetRequiredIntConfig(IConfiguration configuration, string key)
+{
+    var valueStr = configuration[key];
+    if (string.IsNullOrWhiteSpace(valueStr))
+    {
+        throw new InvalidOperationException($"配置项 '{key}' 未设置或为空，请在 appsettings.json 或环境变量中配置。");
+    }
+    if (!int.TryParse(valueStr, out var value))
+    {
+        throw new InvalidOperationException($"配置项 '{key}' 的值 '{valueStr}' 不是有效的整数。");
+    }
+    Console.WriteLine($"[Config] {key} = {value}");
+    return value;
+}
+
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 
 var environment = builder.Environment.EnvironmentName;
+Console.WriteLine($"[Config] Environment = {environment}");
+
 if (environment == "Development")
 {
     builder.Logging.SetMinimumLevel(LogLevel.Debug);
@@ -44,10 +73,12 @@ builder.Services.AddSingleton<IHttpApiService, HttpApiService>();
 
 builder.Services.Configure<MqttConfig>(options =>
 {
-    options.Host = builder.Configuration["MQTT:Host"] ?? "localhost";
-    options.Port = int.Parse(builder.Configuration["MQTT:Port"] ?? "1883");
-    options.Username = builder.Configuration["MQTT:Username"];
-    options.Password = builder.Configuration["MQTT:Password"];
+    options.Host = GetRequiredConfig(builder.Configuration, "MQTT:Host");
+    options.Port = GetRequiredIntConfig(builder.Configuration, "MQTT:Port");
+    options.Username = builder.Configuration["MQTT:Username"] ?? "";
+    options.Password = builder.Configuration["MQTT:Password"] ?? "";
+    Console.WriteLine($"[Config] MQTT:Username = {(string.IsNullOrEmpty(options.Username) ? "(empty)" : options.Username)}");
+    Console.WriteLine($"[Config] MQTT:Password = {(string.IsNullOrEmpty(options.Password) ? "(empty)" : "***")}");
 });
 
 var app = builder.Build();
@@ -88,11 +119,23 @@ public class OrleansClientService : IHostedService
         _logger = logger;
     }
 
+    // 辅助方法：获取配置并验证
+    private string GetRequiredConfig(string key)
+    {
+        var value = _configuration[key];
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"配置项 '{key}' 未设置或为空，请在 appsettings.json 或环境变量中配置。");
+        }
+        Console.WriteLine($"[Config] {key} = {value}");
+        return value;
+    }
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var clusterId = _configuration["Orleans:ClusterId"] ?? "MCS.Orleans.Cluster";
-        var serviceId = _configuration["Orleans:ServiceId"] ?? "MCS.Orleans.Service";
-        var environment = _configuration["ASPNETCORE_ENVIRONMENT"] ?? "Production";
+        var clusterId = GetRequiredConfig("Orleans:ClusterId");
+        var serviceId = GetRequiredConfig("Orleans:ServiceId");
+        var environment = GetRequiredConfig("ASPNETCORE_ENVIRONMENT");
 
         _logger.LogInformation("Starting Orleans Client...");
         _logger.LogInformation("ClusterId: {ClusterId}", clusterId);
@@ -125,9 +168,9 @@ public class OrleansClientService : IHostedService
                 }
                 else
                 {
-                    var gatewayAddresses = _configuration.GetSection("Orleans:GatewayAddresses").Get<List<string>>() 
+                    var gatewayAddresses = _configuration.GetSection("Orleans:GatewayAddresses").Get<List<string>>()
                         ?? new List<string> { "192.168.137.219:30000" };
-                    
+
                     var gateways = gatewayAddresses.Select(addr =>
                     {
                         var parts = addr.Split(':');
@@ -153,7 +196,7 @@ public class OrleansClientService : IHostedService
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping Orleans Client...");
-        
+
         if (_host != null)
         {
             await _host.StopAsync(cancellationToken);

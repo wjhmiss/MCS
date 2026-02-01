@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -13,32 +14,76 @@ using System.Net;
 using MCS.Silo.Database;
 using MCS.Grains.Services;
 
-var host = Host.CreateDefaultBuilder(args)
-    .UseOrleans(siloBuilder =>
+// 辅助方法：获取配置并验证
+static string GetRequiredConfig(IConfiguration configuration, string key)
+{
+    var value = configuration[key];
+    if (string.IsNullOrWhiteSpace(value))
     {
-        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
-        
-        var clusterId = Environment.GetEnvironmentVariable("CLUSTER_ID") ?? "MCS.Orleans.Cluster";
-        var serviceId = Environment.GetEnvironmentVariable("SERVICE_ID") ?? "MCS.Orleans.Service";
-        var siloId = Environment.GetEnvironmentVariable("SILO_ID") ?? "1";
-        var advertisedIP = Environment.GetEnvironmentVariable("ADVERTISED_IP") ?? 
-            (environment == "Development" ? "127.0.0.1" : "192.168.137.219");
-        var siloPort = int.Parse(Environment.GetEnvironmentVariable("SILO_PORT") ?? "11111");
-        var gatewayPort = int.Parse(Environment.GetEnvironmentVariable("GATEWAY_PORT") ?? "30000");
-        var postgresHost = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? 
-            (environment == "Development" ? "postgres" : "192.168.137.219");
-        var postgresPort = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5432";
-        var postgresDb = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "OrleansDB";
-        var postgresUser = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres";
-        var postgresPassword = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "password.123";
-        var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST") ?? 
-            (environment == "Development" ? "redis" : "192.168.137.219");
-        var redisPort = Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379";
-        var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
+        throw new InvalidOperationException($"配置项 '{key}' 未设置或为空，请在 appsettings.json 或环境变量中配置。");
+    }
+    Console.WriteLine($"[Config] {key} = {value}");
+    return value;
+}
+
+static int GetRequiredIntConfig(IConfiguration configuration, string key)
+{
+    var valueStr = configuration[key];
+    if (string.IsNullOrWhiteSpace(valueStr))
+    {
+        throw new InvalidOperationException($"配置项 '{key}' 未设置或为空，请在 appsettings.json 或环境变量中配置。");
+    }
+    if (!int.TryParse(valueStr, out var value))
+    {
+        throw new InvalidOperationException($"配置项 '{key}' 的值 '{valueStr}' 不是有效的整数。");
+    }
+    Console.WriteLine($"[Config] {key} = {value}");
+    return value;
+}
+
+var host = Host.CreateDefaultBuilder(args)
+    .UseEnvironment(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development")
+    .ConfigureHostConfiguration(config =>
+    {
+        config.AddEnvironmentVariables();
+    })
+    .ConfigureAppConfiguration((context, config) =>
+    {
+        config.AddEnvironmentVariables();
+    })
+    .UseOrleans((context, siloBuilder) =>
+    {
+        var configuration = context.Configuration;
+        // 优先从环境变量读取，否则从 HostingEnvironment 读取
+        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") 
+            ?? context.HostingEnvironment.EnvironmentName;
+
+        Console.WriteLine($"[Config] Environment = {environment}");
+
+        // 从配置读取 Orleans 设置
+        var clusterId = GetRequiredConfig(configuration, "Orleans:ClusterId");
+        var serviceId = GetRequiredConfig(configuration, "Orleans:ServiceId");
+        var siloId = GetRequiredConfig(configuration, "Orleans:SiloId");
+        var advertisedIP = GetRequiredConfig(configuration, "Orleans:AdvertisedIP");
+        var siloPort = GetRequiredIntConfig(configuration, "Orleans:SiloPort");
+        var gatewayPort = GetRequiredIntConfig(configuration, "Orleans:GatewayPort");
+
+        // 从配置读取 PostgreSQL 设置
+        var postgresHost = GetRequiredConfig(configuration, "PostgreSQL:Host");
+        var postgresPort = GetRequiredConfig(configuration, "PostgreSQL:Port");
+        var postgresDb = GetRequiredConfig(configuration, "PostgreSQL:Database");
+        var postgresUser = GetRequiredConfig(configuration, "PostgreSQL:User");
+        var postgresPassword = GetRequiredConfig(configuration, "PostgreSQL:Password");
+
+        // 从配置读取 Redis 设置
+        var redisHost = GetRequiredConfig(configuration, "Redis:Host");
+        var redisPort = GetRequiredConfig(configuration, "Redis:Port");
+        var redisPassword = configuration["Redis:Password"] ?? "";
+        Console.WriteLine($"[Config] Redis:Password = {(string.IsNullOrEmpty(redisPassword) ? "(empty)" : "***")}");
 
         var postgresConnectionString = $"Host={postgresHost};Port={postgresPort};Username={postgresUser};Password={postgresPassword};Database={postgresDb}";
-        var redisConnectionString = string.IsNullOrEmpty(redisPassword) 
-            ? $"{redisHost}:{redisPort}" 
+        var redisConnectionString = string.IsNullOrEmpty(redisPassword)
+            ? $"{redisHost}:{redisPort}"
             : $"{redisHost}:{redisPort},password={redisPassword}";
 
         siloBuilder
@@ -130,15 +175,17 @@ var host = Host.CreateDefaultBuilder(args)
                 });
             });
     })
-    .ConfigureServices(services =>
+    .ConfigureServices((context, services) =>
     {
-        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
-        var postgresHost = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? 
-            (environment == "Development" ? "postgres" : "192.168.137.219");
-        var postgresPort = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5432";
-        var postgresDb = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "OrleansDB";
-        var postgresUser = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres";
-        var postgresPassword = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "password.123";
+        var configuration = context.Configuration;
+        var environment = context.HostingEnvironment.EnvironmentName;
+
+        // 从配置读取 PostgreSQL 设置
+        var postgresHost = GetRequiredConfig(configuration, "PostgreSQL:Host");
+        var postgresPort = GetRequiredConfig(configuration, "PostgreSQL:Port");
+        var postgresDb = GetRequiredConfig(configuration, "PostgreSQL:Database");
+        var postgresUser = GetRequiredConfig(configuration, "PostgreSQL:User");
+        var postgresPassword = GetRequiredConfig(configuration, "PostgreSQL:Password");
         var postgresConnectionString = $"Host={postgresHost};Port={postgresPort};Username={postgresUser};Password={postgresPassword};Database={postgresDb}";
 
         services.AddSingleton<ISqlSugarClient>(sp =>
@@ -168,18 +215,18 @@ var host = Host.CreateDefaultBuilder(args)
 
         services.Configure<MqttConfig>(options =>
         {
-            options.Host = Environment.GetEnvironmentVariable("MQTT_HOST") ?? "localhost";
-            options.Port = int.Parse(Environment.GetEnvironmentVariable("MQTT_PORT") ?? "1883");
-            options.Username = Environment.GetEnvironmentVariable("MQTT_USERNAME");
-            options.Password = Environment.GetEnvironmentVariable("MQTT_PASSWORD");
+            options.Host = GetRequiredConfig(configuration, "MQTT:Host");
+            options.Port = GetRequiredIntConfig(configuration, "MQTT:Port");
+            options.Username = configuration["MQTT:Username"] ?? "";
+            options.Password = configuration["MQTT:Password"] ?? "";
         });
     })
-    .ConfigureLogging(logging =>
+    .ConfigureLogging((context, logging) =>
     {
         logging.ClearProviders();
         logging.AddConsole();
-        
-        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
+
+        var environment = context.HostingEnvironment.EnvironmentName;
         if (environment == "Development")
         {
             logging.SetMinimumLevel(LogLevel.Debug);
@@ -192,13 +239,17 @@ var host = Host.CreateDefaultBuilder(args)
     .Build();
 
 var logger = host.Services.GetRequiredService<ILogger<Program>>();
-var advertisedIP = Environment.GetEnvironmentVariable("ADVERTISED_IP") ?? 
-    (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development" ? "localhost" : "192.168.137.219");
+var configuration = host.Services.GetRequiredService<IConfiguration>();
+
+var advertisedIP = GetRequiredConfig(configuration, "Orleans:AdvertisedIP");
+var clusterId = GetRequiredConfig(configuration, "Orleans:ClusterId");
+var serviceId = GetRequiredConfig(configuration, "Orleans:ServiceId");
+var environmentName = host.Services.GetRequiredService<IHostEnvironment>().EnvironmentName;
 
 logger.LogInformation("Starting Orleans Silo on {AdvertisedIP}...", advertisedIP);
-logger.LogInformation("ClusterId: {ClusterId}", Environment.GetEnvironmentVariable("CLUSTER_ID") ?? "MCS.Orleans.Cluster");
-logger.LogInformation("ServiceId: {ServiceId}", Environment.GetEnvironmentVariable("SERVICE_ID") ?? "MCS.Orleans.Service");
-logger.LogInformation("Environment: {Environment}", Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production");
+logger.LogInformation("ClusterId: {ClusterId}", clusterId);
+logger.LogInformation("ServiceId: {ServiceId}", serviceId);
+logger.LogInformation("Environment: {Environment}", environmentName);
 
 var dbInitializer = host.Services.GetRequiredService<OrleansDatabaseInitializer>();
 await dbInitializer.InitializeAsync();
