@@ -11,7 +11,7 @@ services:
     environment:
       - POSTGRES_DB=OrleansDB
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=sa@3397
+      - POSTGRES_PASSWORD=password.123
     volumes:
       - postgres-dev-data:/var/lib/postgresql/data
     networks:
@@ -64,7 +64,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=OrleansDB
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=sa@3397
+      - POSTGRES_PASSWORD=password.123
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     networks:

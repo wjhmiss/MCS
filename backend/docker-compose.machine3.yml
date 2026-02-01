@@ -23,10 +23,10 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=OrleansDB
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=sa@3397
+      - POSTGRES_PASSWORD=password.123
       - REDIS_HOST=192.168.137.219
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=sa@3397
+      - REDIS_PASSWORD=password.123
     networks:
       - mcs-network
     restart: unless-stopped

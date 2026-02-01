@@ -39,10 +39,10 @@
 
 业务数据存储为 Postgres：
 - PostgreSQL
-postgres 链接地址：192.168.137.219 端口：5432   密码：sa@3397，需新建数据库MCS
+postgres 链接地址：192.168.137.219 端口：5432   密码：password.123，需新建数据库MCS
 
 Orleans Silo 及Grain 持久化 为 Postgres和redis
--Postgres 存储，地址为：链接地址：192.168.137.219 端口：5432   密码：sa@3397 ，已新建数据库OrleansDB
+-Postgres 存储，地址为：链接地址：192.168.137.219 端口：5432   密码：password.123 ，已新建数据库OrleansDB
 -redis地址：192.168.137.219 端口：6379
 
 

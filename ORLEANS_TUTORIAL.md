@@ -1259,6 +1259,512 @@ curl -X POST http://localhost:5000/api/chatroom/message/send \
 curl http://localhost:5000/api/chatroom/user/user-001/messages
 ```
 
+### 10.3 TaskGrain 示例
+
+#### 10.3.1 TaskGrain 概述
+
+**TaskGrain** 是一个功能强大的异步任务管理 Grain，支持多种任务执行模式和外部系统集成。
+
+**核心功能**:
+- ✅ 异步任务创建和执行
+- ✅ 任务状态跟踪（Pending/Running/Completed/Failed/Waiting）
+- ✅ 自动重试机制（可配置最大重试次数）
+- ✅ MQTT 消息发布和订阅
+- ✅ HTTP API 调用
+- ✅ 等待外部 Controller 调用
+- ✅ 任务停止和恢复
+
+**任务状态流转**:
+```
+Created → Pending → Running → Completed
+                    ↓
+                  Failed → Retry → Running
+                    ↓
+              WaitingForMqtt/WaitingForController → Completed
+```
+
+#### 10.3.2 创建简单任务
+
+```bash
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "task-001",
+    "name": "数据处理任务",
+    "parameters": {
+      "dataSource": "database",
+      "batchSize": 100
+    }
+  }'
+```
+
+#### 10.3.3 创建带 MQTT 发布的任务
+
+```bash
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "mqtt-task-001",
+    "name": "MQTT消息发布任务",
+    "mqttPublishTopic": "devices/sensor1/command",
+    "mqttPublishMessage": "{\"action\":\"read\"}",
+    "mqttPublishMaxRetries": -1
+  }'
+```
+
+#### 10.3.4 创建等待 MQTT 消息的任务
+
+```bash
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "mqtt-wait-task-001",
+    "name": "等待传感器数据",
+    "mqttSubscribeTopic": "devices/sensor1/data"
+  }'
+```
+
+#### 10.3.5 创建 HTTP API 调用任务
+
+```bash
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "api-task-001",
+    "name": "调用外部API",
+    "apiUrl": "https://api.example.com/process",
+    "apiMethod": "POST",
+    "apiHeaders": {
+      "Authorization": "Bearer token123",
+      "Content-Type": "application/json"
+    },
+    "apiBody": "{\"key\":\"value\"}",
+    "apiCallMaxRetries": 3
+  }'
+```
+
+#### 10.3.6 创建等待 Controller 调用的任务
+
+```bash
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "wait-task-001",
+    "name": "等待人工确认",
+    "waitForController": true
+  }'
+```
+
+#### 10.3.7 执行任务
+
+```bash
+curl -X POST http://localhost:5000/api/task/task-001/execute
+```
+
+#### 10.3.8 获取任务状态
+
+```bash
+curl http://localhost:5000/api/task/task-001
+```
+
+#### 10.3.9 触发 Controller 调用（继续等待中的任务）
+
+```bash
+curl -X POST http://localhost:5000/api/task/wait-task-001/controller-call \
+  -H "Content-Type: application/json" \
+  -d '{
+    "approved": true,
+    "approver": "admin",
+    "timestamp": "2025-01-30T10:00:00Z"
+  }'
+```
+
+#### 10.3.10 停止任务
+
+```bash
+curl -X POST http://localhost:5000/api/task/task-001/stop
+```
+
+#### 10.3.11 TaskGrain 代码解析
+
+**核心执行流程**:
+
+```csharp
+public async Task ExecuteAsync()
+{
+    // 1. 检查任务是否可以执行
+    if (!await CanExecuteAsync())
+        throw new InvalidOperationException("Task must be part of a workflow");
+
+    // 2. 更新状态为 Running
+    _state.State.Status = Models.TaskStatus.Running;
+    await _state.WriteStateAsync();
+
+    try
+    {
+        // 3. 执行 MQTT 发布（带无限重试）
+        if (!string.IsNullOrEmpty(_state.State.MqttPublishTopic))
+            await ExecuteMqttPublishWithRetryAsync();
+
+        // 4. 执行 HTTP API 调用（带无限重试）
+        if (!string.IsNullOrEmpty(_state.State.ApiUrl))
+            await ExecuteApiCallWithRetryAsync();
+
+        // 5. 等待 MQTT 消息（异步等待）
+        if (!string.IsNullOrEmpty(_state.State.MqttSubscribeTopic))
+        {
+            await WaitForMqttMessageAsync();
+            return; // 等待外部触发
+        }
+
+        // 6. 等待 Controller 调用（异步等待）
+        if (_state.State.WaitForController)
+        {
+            await WaitForControllerCallAsync();
+            return; // 等待外部触发
+        }
+
+        // 7. 任务完成
+        _state.State.Status = Models.TaskStatus.Completed;
+        await _state.WriteStateAsync();
+    }
+    catch (Exception ex)
+    {
+        // 8. 错误处理和重试
+        await HandleErrorAsync(ex);
+    }
+}
+```
+
+**指数退避重试机制**:
+
+```csharp
+private async Task ExecuteApiCallWithRetryAsync()
+{
+    while (!_state.State.IsStopped)
+    {
+        try
+        {
+            var response = await _httpApiService.SendAsync(...);
+            if (response.IsSuccess) return;
+        }
+        catch (Exception ex)
+        {
+            _state.State.ApiCallRetryCount++;
+            
+            // 指数退避：1s, 2s, 4s, 8s... 最大60s
+            var delay = Math.Min(1000 * (int)Math.Pow(2, _state.State.ApiCallRetryCount), 60000);
+            await Task.Delay(delay);
+        }
+    }
+}
+```
+
+**MQTT 消息处理回调**:
+
+```csharp
+public async Task OnMqttMessageReceivedAsync(string topic, string message)
+{
+    _state.State.MqttReceivedMessage = message;
+    _state.State.Status = Models.TaskStatus.Completed;
+    _state.State.WaitingState = null;
+    await _state.WriteStateAsync();
+    
+    await _mqttService.UnsubscribeAsync(topic);
+}
+```
+
+### 10.4 WorkflowGrain 示例
+
+#### 10.4.1 WorkflowGrain 概述
+
+**WorkflowGrain** 是一个强大的工作流编排引擎，支持多种执行模式和定时调度。
+
+**核心功能**:
+- ✅ 串行工作流（按顺序执行任务）
+- ✅ 并行工作流（同时执行所有任务）
+- ✅ 嵌套工作流（工作流中包含子工作流）
+- ✅ 工作流状态管理（Created/Running/Completed/Paused/Stopped）
+- ✅ 定时执行和循环执行
+- ✅ 执行历史记录
+- ✅ 暂停和恢复
+
+**工作流类型**:
+
+| 类型 | 说明 | 适用场景 |
+|------|------|----------|
+| **Serial** | 串行执行，任务按顺序一个一个执行 | 有依赖关系的流程 |
+| **Parallel** | 并行执行，所有任务同时执行 | 独立任务批量处理 |
+| **Nested** | 嵌套执行，支持子工作流 | 复杂业务流程 |
+
+**工作流状态流转**:
+```
+Created → Running → Completed
+    ↓         ↓
+  Paused ←———┘    Failed
+    ↓              ↓
+  Running ←——— Reset
+    ↓
+  Stopped
+```
+
+#### 10.4.2 创建串行工作流
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflowId": "workflow-serial-001",
+    "name": "订单处理流程",
+    "type": "Serial",
+    "taskIds": ["task-validate", "task-process", "task-notify"]
+  }'
+```
+
+#### 10.4.3 创建并行工作流
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflowId": "workflow-parallel-001",
+    "name": "数据同步流程",
+    "type": "Parallel",
+    "taskIds": ["task-sync-db", "task-sync-cache", "task-sync-search"]
+  }'
+```
+
+#### 10.4.4 创建嵌套工作流
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflowId": "workflow-nested-001",
+    "name": "复杂业务流程",
+    "type": "Nested",
+    "taskIds": ["task-step1", "task-step2"],
+    "parentWorkflowId": "workflow-parent-001"
+  }'
+```
+
+#### 10.4.5 启动工作流
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/workflow-serial-001/start
+```
+
+#### 10.4.6 获取工作流状态
+
+```bash
+curl http://localhost:5000/api/workflow/workflow-serial-001
+```
+
+#### 10.4.7 暂停工作流
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/workflow-serial-001/pause
+```
+
+#### 10.4.8 恢复工作流
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/workflow-serial-001/resume
+```
+
+#### 10.4.9 设置定时执行
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/workflow-serial-001/schedule \
+  -H "Content-Type: application/json" \
+  -d '{
+    "intervalMs": 3600000,
+    "isLooped": true,
+    "loopCount": 24
+  }'
+```
+
+#### 10.4.10 取消定时执行
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/workflow-serial-001/unschedule
+```
+
+#### 10.4.11 获取执行历史
+
+```bash
+curl http://localhost:5000/api/workflow/workflow-serial-001/history
+```
+
+#### 10.4.12 重置工作流
+
+```bash
+curl -X POST http://localhost:5000/api/workflow/workflow-serial-001/reset
+```
+
+#### 10.4.13 WorkflowGrain 代码解析
+
+**串行执行流程**:
+
+```csharp
+private async Task ExecuteSerialWorkflowAsync()
+{
+    for (int i = _state.State.CurrentTaskIndex; i < _state.State.TaskIds.Count; i++)
+    {
+        _state.State.CurrentTaskIndex = i;
+        await _state.WriteStateAsync();
+
+        var taskId = _state.State.TaskIds[i];
+        var taskGrain = GrainFactory.GetGrain<ITaskGrain>(taskId);
+
+        // 记录执行历史
+        _state.State.ExecutionHistory.Add($"[{DateTime.UtcNow}] Starting task {taskId}");
+        await _state.WriteStateAsync();
+
+        // 执行任务
+        await taskGrain.ExecuteAsync();
+
+        // 获取执行结果
+        var result = await taskGrain.GetResultAsync();
+        _state.State.ExecutionHistory.Add($"[{DateTime.UtcNow}] Task completed: {result}");
+        await _state.WriteStateAsync();
+    }
+
+    _state.State.Status = WorkflowStatus.Completed;
+    await _state.WriteStateAsync();
+}
+```
+
+**并行执行流程**:
+
+```csharp
+private async Task ExecuteParallelWorkflowAsync()
+{
+    var tasks = new List<Task>();
+
+    foreach (var taskId in _state.State.TaskIds)
+    {
+        var taskGrain = GrainFactory.GetGrain<ITaskGrain>(taskId);
+        
+        // 并行启动所有任务
+        tasks.Add(Task.Run(async () =>
+        {
+            await taskGrain.ExecuteAsync();
+            var result = await taskGrain.GetResultAsync();
+            
+            // 记录每个任务的完成
+            _state.State.ExecutionHistory.Add($"[{DateTime.UtcNow}] Task completed: {result}");
+            await _state.WriteStateAsync();
+        }));
+    }
+
+    // 等待所有任务完成
+    await Task.WhenAll(tasks);
+
+    _state.State.Status = WorkflowStatus.Completed;
+    await _state.WriteStateAsync();
+}
+```
+
+**定时执行机制（基于 Reminder）**:
+
+```csharp
+public async Task ScheduleAsync(long intervalMs, bool isLooped = false, int? loopCount = null)
+{
+    _state.State.IsScheduled = true;
+    _state.State.ScheduleInterval = intervalMs;
+    _state.State.IsLooped = isLooped;
+    _state.State.LoopCount = loopCount;
+    _state.State.ReminderName = $"workflow-reminder-{_state.State.WorkflowId}";
+
+    // 注册 Orleans Reminder
+    _reminder = await this.RegisterOrUpdateReminder(
+        _state.State.ReminderName,
+        TimeSpan.FromMilliseconds(intervalMs),
+        TimeSpan.FromMilliseconds(intervalMs));
+}
+
+// Reminder 回调
+public async Task ReceiveReminder(string reminderName, TickStatus status)
+{
+    if (_state.State.IsLooped)
+    {
+        _state.State.CurrentLoopCount++;
+        
+        // 检查是否达到最大循环次数
+        if (_state.State.LoopCount.HasValue && 
+            _state.State.CurrentLoopCount > _state.State.LoopCount.Value)
+        {
+            await UnscheduleAsync();
+            return;
+        }
+    }
+
+    // 执行工作流
+    await ExecuteWorkflowInternalAsync();
+}
+```
+
+#### 10.4.14 完整工作流示例
+
+**场景**: 电商订单处理流程
+
+```bash
+# 1. 创建验证任务
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "order-validate",
+    "name": "验证订单信息"
+  }'
+
+# 2. 创建库存检查任务
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "order-inventory",
+    "name": "检查库存",
+    "apiUrl": "http://inventory-service/check",
+    "apiMethod": "POST"
+  }'
+
+# 3. 创建支付处理任务
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "order-payment",
+    "name": "处理支付",
+    "apiUrl": "http://payment-service/process",
+    "apiMethod": "POST"
+  }'
+
+# 4. 创建通知任务
+curl -X POST http://localhost:5000/api/task/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "order-notify",
+    "name": "发送通知",
+    "mqttPublishTopic": "orders/notifications",
+    "mqttPublishMessage": "{\"status\":\"completed\"}"
+  }'
+
+# 5. 创建订单处理工作流
+curl -X POST http://localhost:5000/api/workflow/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflowId": "order-workflow-001",
+    "name": "订单处理流程",
+    "type": "Serial",
+    "taskIds": ["order-validate", "order-inventory", "order-payment", "order-notify"]
+  }'
+
+# 6. 启动工作流
+curl -X POST http://localhost:5000/api/workflow/order-workflow-001/start
+
+# 7. 查询工作流状态
+curl http://localhost:5000/api/workflow/order-workflow-001
+```
+
 ---
 
 ## 总结

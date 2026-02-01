@@ -29,7 +29,7 @@ services:
     environment:
       - POSTGRES_DB=OrleansDB
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=sa@3397
+      - POSTGRES_PASSWORD=password.123
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
@@ -58,7 +58,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    command: redis-server --appendonly yes --requirepass sa@3397
+    command: redis-server --appendonly yes --requirepass password.123
 
   # Silo #1 服务
   mcs-silo:
@@ -82,10 +82,10 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=OrleansDB
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=sa@3397
+      - POSTGRES_PASSWORD=password.123
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=sa@3397
+      - REDIS_PASSWORD=password.123
     networks:
       - mcs-network
     restart: unless-stopped

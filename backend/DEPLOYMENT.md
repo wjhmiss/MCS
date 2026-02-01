@@ -357,7 +357,7 @@ docker compose -f docker-compose.machine3.yml up -d
     "Port": 5432,
     "Database": "OrleansDB",
     "User": "postgres",
-    "Password": "sa@3397"
+    "Password": "password.123"
   },
   "Redis": {
     "Host": "redis",
@@ -410,12 +410,12 @@ docker compose -f docker-compose.machine3.yml up -d
     "Port": 5432,
     "Database": "OrleansDB",
     "User": "postgres",
-    "Password": "sa@3397"
+    "Password": "password.123"
   },
   "Redis": {
     "Host": "192.168.137.219",
     "Port": 6379,
-    "Password": "sa@3397"
+    "Password": "password.123"
   }
 }
 ```
@@ -1008,10 +1008,10 @@ curl http://192.168.137.219/api/workflow/{workflowId}
 | `POSTGRES_PORT`          | PostgreSQL 端口     | 5432                | 5432                        |
 | `POSTGRES_DB`            | PostgreSQL 数据库名 | OrleansDB           | OrleansDB                   |
 | `POSTGRES_USER`          | PostgreSQL 用户名   | postgres            | postgres                    |
-| `POSTGRES_PASSWORD`      | PostgreSQL 密码     | sa@3397             | sa@3397                     |
+| `POSTGRES_PASSWORD`      | PostgreSQL 密码     | password.123             | password.123                     |
 | `REDIS_HOST`             | Redis 主机地址      | redis               | redis 或 192.168.137.219    |
 | `REDIS_PORT`             | Redis 端口          | 6379                | 6379                        |
-| `REDIS_PASSWORD`         | Redis 密码          | -                   | sa@3397                     |
+| `REDIS_PASSWORD`         | Redis 密码          | -                   | password.123                     |
 
 ### 7.2 API 配置
 
@@ -1065,7 +1065,7 @@ curl http://192.168.137.219/api/workflow/{workflowId}
     "Port": 5432,
     "Database": "OrleansDB",
     "User": "postgres",
-    "Password": "sa@3397"
+    "Password": "password.123"
   },
   "Redis": {
     "Host": "redis",
@@ -1093,12 +1093,12 @@ curl http://192.168.137.219/api/workflow/{workflowId}
     "Port": 5432,
     "Database": "OrleansDB",
     "User": "postgres",
-    "Password": "sa@3397"
+    "Password": "password.123"
   },
   "Redis": {
     "Host": "192.168.137.219",
     "Port": 6379,
-    "Password": "sa@3397"
+    "Password": "password.123"
   }
 }
 ```
@@ -1403,7 +1403,7 @@ docker-compose -f docker-compose.machine3.yml down -v
 .AddAdoNetGrainStorage("Default", options =>
 {
     options.Invariant = "Npgsql";
-    options.ConnectionString = "Host=postgres;Port=5432;Username=postgres;Password=sa@3397;Database=OrleansDB;Maximum Pool Size=100;Connection Lifetime=0;";
+    options.ConnectionString = "Host=postgres;Port=5432;Username=postgres;Password=password.123;Database=OrleansDB;Maximum Pool Size=100;Connection Lifetime=0;";
 })
 ```
 
@@ -1576,10 +1576,10 @@ Redis 数据文件位于 `redis-data` volume 中。
          - POSTGRES_PORT=5432
          - POSTGRES_DB=OrleansDB
          - POSTGRES_USER=postgres
-         - POSTGRES_PASSWORD=sa@3397
+         - POSTGRES_PASSWORD=password.123
          - REDIS_HOST=192.168.137.219
          - REDIS_PORT=6379
-         - REDIS_PASSWORD=sa@3397
+         - REDIS_PASSWORD=password.123
        networks:
          - mcs-network
        restart: unless-stopped

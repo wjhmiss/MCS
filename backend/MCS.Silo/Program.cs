@@ -30,7 +30,7 @@ var host = Host.CreateDefaultBuilder(args)
         var postgresPort = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5432";
         var postgresDb = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "OrleansDB";
         var postgresUser = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres";
-        var postgresPassword = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "sa@3397";
+        var postgresPassword = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "password.123";
         var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST") ?? 
             (environment == "Development" ? "redis" : "192.168.137.219");
         var redisPort = Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379";
@@ -138,7 +138,7 @@ var host = Host.CreateDefaultBuilder(args)
         var postgresPort = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5432";
         var postgresDb = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "OrleansDB";
         var postgresUser = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres";
-        var postgresPassword = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "sa@3397";
+        var postgresPassword = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "password.123";
         var postgresConnectionString = $"Host={postgresHost};Port={postgresPort};Username={postgresUser};Password={postgresPassword};Database={postgresDb}";
 
         services.AddSingleton<ISqlSugarClient>(sp =>

@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "新建配置文件",
+    "Projects": [
+      {
+        "Path": "MCS.API\\MCS.API.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "MCS.Silo\\MCS.Silo.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]
