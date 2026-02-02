@@ -317,7 +317,7 @@ public class TaskGrain : Grain, ITaskGrain
 
     /// <summary>
     /// 停止任务
-    /// 将任务状态更新为已取消，并通知工作流
+    /// 将任务状态更新为已取消
     /// 已完成、失败或取消的任务不能再次停止
     /// </summary>
     public async Task StopAsync()
@@ -339,11 +339,8 @@ public class TaskGrain : Grain, ITaskGrain
         // 将状态持久化到存储
         await _state.WriteStateAsync();
 
-        // 通知工作流任务停止（失败）
-        if (_workflowGrain != null)
-        {
-            await _workflowGrain.NotifyTaskCompletedAsync(_state.State.TaskId, false, "Task was stopped");
-        }
+        // 不再通知工作流任务停止
+        // 工作流停止是由工作流本身发起的，不需要通知
     }
 
     /// <summary>

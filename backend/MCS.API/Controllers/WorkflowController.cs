@@ -24,6 +24,7 @@ public class WorkflowController : ControllerBase
 
     /// <summary>
     /// 创建工作流
+    /// 支持设置定时执行参数
     /// </summary>
     /// <param name="request">创建工作流请求</param>
     /// <returns>工作流ID</returns>
@@ -35,7 +36,12 @@ public class WorkflowController : ControllerBase
             var workflowId = Guid.NewGuid().ToString();
             var workflowGrain = _clusterClient.GetGrain<IWorkflowGrain>(workflowId);
 
-            var result = await workflowGrain.CreateWorkflowAsync(request.Name);
+            var result = await workflowGrain.CreateWorkflowAsync(
+                request.Name,
+                request.ScheduledTime,
+                request.Period,
+                request.MaxExecutions
+            );
             return Ok(new { WorkflowId = result });
         }
         catch (Exception ex)
@@ -435,6 +441,21 @@ public class CreateWorkflowRequest
     /// 工作流名称
     /// </summary>
     public string Name { get; set; }
+
+    /// <summary>
+    /// 首次执行时间（UTC时间，可选，null表示立即执行）
+    /// </summary>
+    public DateTime? ScheduledTime { get; set; }
+
+    /// <summary>
+    /// 循环周期（可选，null表示一次性执行）
+    /// </summary>
+    public TimeSpan? Period { get; set; }
+
+    /// <summary>
+    /// 最大执行次数（可选，null表示无限循环）
+    /// </summary>
+    public int? MaxExecutions { get; set; }
 }
 
 /// <summary>
