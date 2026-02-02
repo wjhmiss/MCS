@@ -99,6 +99,40 @@ public class TaskGrain : Grain, ITaskGrain
     }
 
     /// <summary>
+    /// 更新任务信息
+    /// 更新任务的名称、类型、顺序和自定义数据
+    /// 只能在Pending状态下更新任务
+    /// </summary>
+    /// <param name="name">任务名称</param>
+    /// <param name="type">任务类型（Direct或WaitForExternal）</param>
+    /// <param name="order">任务在工作流中的执行顺序</param>
+    /// <param name="data">任务的自定义数据字典</param>
+    public async Task UpdateAsync(string name, ModelsTaskType type, int order, Dictionary<string, object>? data = null)
+    {
+        // 检查任务状态，只允许在Pending状态下更新任务
+        if (_state.State.Status != ModelsTaskStatus.Pending)
+        {
+            throw new InvalidOperationException($"Cannot update task in status: {_state.State.Status}");
+        }
+
+        // 更新任务信息
+        _state.State.Name = name;
+        _state.State.Type = type;
+        _state.State.Order = order;
+        // 如果提供了新的数据，则更新数据；否则保持原有数据
+        if (data != null)
+        {
+            _state.State.Data = data;
+        }
+
+        // 在执行日志中添加更新记录
+        _state.State.ExecutionLog.Add($"[{DateTime.UtcNow}] Task '{name}' updated (Type: {type}, Order: {order})");
+
+        // 将状态持久化到存储
+        await _state.WriteStateAsync();
+    }
+
+    /// <summary>
     /// 执行任务
     /// 根据任务类型执行不同的逻辑
     /// Direct类型：立即执行并完成

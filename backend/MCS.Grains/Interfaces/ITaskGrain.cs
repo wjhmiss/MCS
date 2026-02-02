@@ -7,6 +7,7 @@ namespace MCS.Grains.Interfaces;
 public interface ITaskGrain : IGrainWithStringKey
 {
     Task InitializeAsync(string workflowId, string name, ModelsTaskType type, int order, Dictionary<string, object>? data = null);
+    Task UpdateAsync(string name, ModelsTaskType type, int order, Dictionary<string, object>? data = null);
     Task ExecuteAsync();
     Task PauseAsync();
     Task ResumeAsync();

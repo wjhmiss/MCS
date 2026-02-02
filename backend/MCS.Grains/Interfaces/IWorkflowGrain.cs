@@ -7,7 +7,7 @@ namespace MCS.Grains.Interfaces;
 public interface IWorkflowGrain : IGrainWithStringKey
 {
     Task<string> CreateWorkflowAsync(string name);
-    Task<string> AddTaskAsync(string taskId, string name, ModelsTaskType type, Dictionary<string, object>? data = null);
+    Task<List<string>> AddAndEditTasksAsync(List<(string taskId, string name, ModelsTaskType type, int order, Dictionary<string, object>? data)> tasks);
     Task StartAsync();
     Task PauseAsync();
     Task ResumeAsync();

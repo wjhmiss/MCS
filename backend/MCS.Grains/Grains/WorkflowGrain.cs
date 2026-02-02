@@ -71,57 +71,84 @@ public class WorkflowGrain : Grain, IWorkflowGrain
     }
 
     /// <summary>
-    /// 添加任务到工作流
-    /// 只能在Created状态下添加任务
-    /// 任务会按照添加顺序执行
+    /// 批量添加、编辑或删除任务到工作流
+    /// 传入的任务列表是整个工作流的任务列表
+    /// 当任务存在时更新任务信息，当任务不存在时添加新任务
+    /// 之前的工作流中的任务如果不在传入的任务列表内，则删除
+    /// 只能在Created或Stopped状态下操作
     /// </summary>
-    /// <param name="taskId">任务ID，用于获取对应的TaskGrain</param>
-    /// <param name="name">任务名称</param>
-    /// <param name="type">任务类型（Direct或WaitForExternal）</param>
-    /// <param name="data">任务的自定义数据字典</param>
-    /// <returns>任务ID</returns>
-    public async Task<string> AddTaskAsync(string taskId, string name, ModelsTaskType type, Dictionary<string, object>? data = null)
+    /// <param name="tasks">任务列表，每个任务包含taskId、name、type、order、data</param>
+    /// <returns>任务ID列表</returns>
+    public async Task<List<string>> AddAndEditTasksAsync(List<(string taskId, string name, ModelsTaskType type, int order, Dictionary<string, object>? data)> tasks)
     {
-        // 检查工作流状态，只允许在Created状态下添加任务
-        if (_state.State.Status != WorkflowStatus.Created)
+        // 检查工作流状态，只允许在Created或Stopped状态下操作
+        if (_state.State.Status != WorkflowStatus.Created && _state.State.Status != WorkflowStatus.Stopped)
         {
-            throw new InvalidOperationException($"Cannot add task to workflow in status: {_state.State.Status}");
+            throw new InvalidOperationException($"Cannot add, edit or delete tasks to workflow in status: {_state.State.Status}");
         }
 
-        // 获取任务Grain实例
-        var taskGrain = GrainFactory.GetGrain<ITaskGrain>(taskId);
-        // 计算任务的执行顺序（当前任务数量即为新任务的顺序）
-        var order = _state.State.Tasks.Count;
+        // 获取传入的任务ID集合
+        var inputTaskIds = new HashSet<string>(tasks.Select(t => t.taskId));
+        var taskIds = new List<string>();
 
-        // 初始化任务Grain
-        await taskGrain.InitializeAsync(
-            _state.State.WorkflowId,  // 工作流ID
-            name,                      // 任务名称
-            type,                       // 任务类型
-            order,                      // 执行顺序
-            data                        // 自定义数据
-        );
-
-        // 创建任务摘要对象，只保存任务的基本信息
-        var taskSummary = new TaskSummary
+        // 处理传入的任务列表
+        foreach (var (taskId, name, type, order, data) in tasks)
         {
-            // 任务ID
-            TaskId = taskId,
-            // 任务名称
-            Name = name,
-            // 执行顺序
-            Order = order
-        };
+            var taskGrain = GrainFactory.GetGrain<ITaskGrain>(taskId);
 
-        // 将任务摘要添加到工作流的任务列表
-        _state.State.Tasks.Add(taskSummary);
-        // 在执行历史中添加任务添加记录
-        _state.State.ExecutionHistory.Add($"[{DateTime.UtcNow}] Task '{name}' (Type: {type}) added to workflow at position {order}");
-        // 将状态持久化到存储
+            // 检查任务是否已存在
+            var existingTask = _state.State.Tasks.FirstOrDefault(t => t.TaskId == taskId);
+
+            if (existingTask != null)
+            {
+                // 任务已存在，更新任务信息
+                await taskGrain.UpdateAsync(name, type, order, data);
+
+                // 更新任务摘要信息
+                existingTask.Name = name;
+                existingTask.Order = order;
+
+                // 在执行历史中添加任务更新记录
+                _state.State.ExecutionHistory.Add($"[{DateTime.UtcNow}] Task '{name}' (Type: {type}) updated at position {order}");
+            }
+            else
+            {
+                // 任务不存在，添加新任务
+                await taskGrain.InitializeAsync(
+                    _state.State.WorkflowId,
+                    name,
+                    type,
+                    order,
+                    data
+                );
+
+                var taskSummary = new TaskSummary
+                {
+                    TaskId = taskId,
+                    Name = name,
+                    Order = order
+                };
+
+                _state.State.Tasks.Add(taskSummary);
+                // 在执行历史中添加任务添加记录
+                _state.State.ExecutionHistory.Add($"[{DateTime.UtcNow}] Task '{name}' (Type: {type}) added to workflow at position {order}");
+            }
+
+            taskIds.Add(taskId);
+        }
+
+        // 删除不在传入任务列表中的任务
+        var tasksToRemove = _state.State.Tasks.Where(t => !inputTaskIds.Contains(t.TaskId)).ToList();
+        foreach (var taskToRemove in tasksToRemove)
+        {
+            // 从工作流的任务列表中移除
+            _state.State.Tasks.Remove(taskToRemove);
+            // 在执行历史中添加任务删除记录
+            _state.State.ExecutionHistory.Add($"[{DateTime.UtcNow}] Task '{taskToRemove.Name}' (TaskId: {taskToRemove.TaskId}) removed from workflow");
+        }
+
         await _state.WriteStateAsync();
-
-        // 返回任务ID
-        return taskId;
+        return taskIds;
     }
 
     /// <summary>
