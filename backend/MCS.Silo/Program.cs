@@ -44,14 +44,6 @@ static int GetRequiredIntConfig(IConfiguration configuration, string key)
 
 var host = Host.CreateDefaultBuilder(args)
     .UseEnvironment(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development")
-    .ConfigureHostConfiguration(config =>
-    {
-        config.AddEnvironmentVariables();
-    })
-    .ConfigureAppConfiguration((context, config) =>
-    {
-        config.AddEnvironmentVariables();
-    })
     .UseOrleans((context, siloBuilder) =>
     {
         var configuration = context.Configuration;
